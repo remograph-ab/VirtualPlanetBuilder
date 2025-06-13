@@ -155,13 +155,13 @@ bool vpb::areCoordinateSystemEquivalent(const osg::CoordinateSystemNode* lhs,con
 void SpatialProperties::computeExtents()
 {
     _extents.init();
-    _extents.expandBy( osg::Vec3(0.0,0.0,0.0)*_geoTransform);
+    _extents.expandBy( osg::Vec3d(0.0,0.0,0.0)*_geoTransform);
 
     // get correct extent if a vector format is used
     if (_dataType == VECTOR)
-        _extents.expandBy( osg::Vec3(_numValuesX-1,_numValuesY-1,0.0)*_geoTransform);
+        _extents.expandBy( osg::Vec3d(_numValuesX-1,_numValuesY-1,0.0)*_geoTransform);
     else
-        _extents.expandBy( osg::Vec3(_numValuesX,_numValuesY,0.0)*_geoTransform);
+        _extents.expandBy( osg::Vec3d(_numValuesX,_numValuesY,0.0)*_geoTransform);
      
     _extents._isGeographic = getCoordinateSystemType(_cs.get())==GEOGRAPHIC;
 

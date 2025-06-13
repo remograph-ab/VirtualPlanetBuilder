@@ -180,6 +180,15 @@ public:
         if(v.y()>_max.y()) _max.y() = v.y();
     }
 
+    inline void expandBy(const osg::Vec3d& v)
+    {
+      if (v.x()<_min.x()) _min.x() = v.x();
+      if (v.x()>_max.x()) _max.x() = v.x();
+
+      if (v.y()<_min.y()) _min.y() = v.y();
+      if (v.y()>_max.y()) _max.y() = v.y();
+    }
+
     void expandBy(const GeospatialExtents& e)
     {
         if (!e.valid()) return;

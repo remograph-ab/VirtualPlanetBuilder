@@ -413,6 +413,12 @@ class VPB_EXPORT BuildOptions : public ImageOptions
 
         unsigned int getLayerMaximumTileImageSize(unsigned int layer) const { return getValidLayerImageOptions(layer)->getMaximumTileImageSize(); }
 
+        inline void setDefaultTexture(osg::Texture2D *texture, const double &resolution) {
+          _defaultTexture = texture;
+          _defaultTextureResolution = resolution;
+        }
+
+
     protected:
 
 
@@ -489,6 +495,9 @@ class VPB_EXPORT BuildOptions : public ImageOptions
 
         typedef std::vector< osg::ref_ptr<ImageOptions> > LayerImageOptions;
         LayerImageOptions                            _imageOptions;
+
+        osg::ref_ptr<osg::Texture2D>                _defaultTexture;
+        double                                      _defaultTextureResolution;
 };
 
 }

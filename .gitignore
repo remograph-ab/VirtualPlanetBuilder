@@ -42,3 +42,13 @@ install_manifest.txt
 *.exe
 *.out
 *.app
+
+/.vs
+*.vcxproj
+*.filters
+*.user
+*.sln
+*.lastbuildstate
+*.tlog
+*.pdb
+*.bak

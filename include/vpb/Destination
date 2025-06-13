@@ -16,6 +16,7 @@
 
 #include <vpb/Source>
 #include <osg/ClusterCullingCallback>
+#include <osg/Texture2D>
 
 namespace vpb
 {
@@ -102,6 +103,10 @@ public:
     
     void accept(DestinationVisitor& visitor) { visitor.apply(*this); }
 
+    inline void setDefaultTexture(osg::Texture2D *texture, const double &resolution) {
+      _defaultTexture = texture; 
+      _defaultTextureResolution = resolution;
+    }
 
     const ImageOptions* getImageOptions(unsigned int layerNum) const;
     GLenum getPixelFormat(unsigned int layerNum) const;
@@ -163,6 +168,7 @@ public:
     osg::Node* createScene();
 
     osg::StateSet* createStateSet();
+    osg::StateSet* createDefaultGeometryAndStateSet(osg::Geometry *geometry);
     osg::Node* createHeightField();
     osg::Node* createTerrainTile();
     osg::Node* createPolygonal();
@@ -181,15 +187,18 @@ public:
     unsigned int                                _tileX;
     unsigned int                                _tileY;
 
+    osg::ref_ptr<osg::Texture2D>                _defaultTexture;
+    double                                      _defaultTextureResolution;
+
     struct ImageData
     {
         ImageData():
-            _image_maxSourceResolutionX(0.0f),
-            _image_maxSourceResolutionY(0.0f) {}
+            _image_maxSourceResolutionX(0.0),
+            _image_maxSourceResolutionY(0.0) {}
 
 
-        float                                  _image_maxSourceResolutionX;
-        float                                  _image_maxSourceResolutionY;
+        double                                  _image_maxSourceResolutionX;
+        double                                  _image_maxSourceResolutionY;
 
         osg::ref_ptr<DestinationData>          _imageDestination;
     };
@@ -198,8 +207,8 @@ public:
     {
         ImageSet():
             _optional(false),
-            _image_maxSourceResolutionX(0.0f),
-            _image_maxSourceResolutionY(0.0f) {}
+            _image_maxSourceResolutionX(0.0),
+            _image_maxSourceResolutionY(0.0) {}
             
         bool valid()
         {
@@ -218,8 +227,8 @@ public:
         
         bool                                    _optional;
 
-        float                                   _image_maxSourceResolutionX;
-        float                                   _image_maxSourceResolutionY;
+        double                                   _image_maxSourceResolutionX;
+        double                                   _image_maxSourceResolutionY;
     };
 
     std::vector<ImageSet>                       _imageLayerSet;
@@ -249,8 +258,8 @@ public:
 
     unsigned int                                _terrain_maxNumColumns;
     unsigned int                                _terrain_maxNumRows;
-    float                                       _terrain_maxSourceResolutionX;
-    float                                       _terrain_maxSourceResolutionY;
+    double                                      _terrain_maxSourceResolutionX;
+    double                                      _terrain_maxSourceResolutionY;
 
     bool                                        _complete;
 

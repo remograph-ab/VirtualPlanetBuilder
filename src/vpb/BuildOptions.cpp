@@ -245,6 +245,8 @@ void BuildOptions::setBuildOptions(const BuildOptions& rhs)
         _imageOptions.push_back( rhs.getLayerImageOptions(i) ? osg::clone(rhs.getLayerImageOptions(i)) : 0 );
     }
 
+    _defaultTexture = rhs._defaultTexture;
+    _defaultTextureResolution = rhs._defaultTextureResolution;
 }
 
 void BuildOptions::setDestinationName(const std::string& filename)

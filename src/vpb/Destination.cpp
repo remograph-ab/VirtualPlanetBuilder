@@ -25,6 +25,7 @@
 #include <osg/ImageUtils>
 #include <osg/PagedLOD>
 #include <osg/io_utils>
+#include <osg/GLU>
 
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
@@ -82,9 +83,10 @@ DestinationTile::DestinationTile():
     _maxSourceLevel(0),
     _terrain_maxNumColumns(1024),
     _terrain_maxNumRows(1024),
-    _terrain_maxSourceResolutionX(0.0f),
-    _terrain_maxSourceResolutionY(0.0f),
-    _complete(false)
+    _terrain_maxSourceResolutionX(0.0),
+    _terrain_maxSourceResolutionY(0.0),
+    _complete(false),
+    _defaultTextureResolution(0.0)
 {
     for(int i=0;i<NUMBER_OF_POSITIONS;++i)
     {
@@ -178,18 +180,18 @@ void DestinationTile::computeMaximumSourceResolution(Source* source)
         {
             _maxSourceLevel = osg::maximum(source->getMaxLevel(),_maxSourceLevel);
 
-            float sourceResolutionX;
-            float sourceResolutionY;
+            double sourceResolutionX;
+            double sourceResolutionY;
             // set up properly for vector and raster (previously always raster)
             if (sp._dataType == SpatialProperties::VECTOR)
             {
-                sourceResolutionX = (sp._extents.xMax()-sp._extents.xMin())/(float)(sp._numValuesX-1);
-                sourceResolutionY = (sp._extents.yMax()-sp._extents.yMin())/(float)(sp._numValuesY-1);
+                sourceResolutionX = (sp._extents.xMax()-sp._extents.xMin())/(double)(sp._numValuesX-1);
+                sourceResolutionY = (sp._extents.yMax() - sp._extents.yMin()) / (double)(sp._numValuesY - 1);
             }
             else    // if (sp._dataType == SpatialProperties::RASTER)
             {
-                sourceResolutionX = (sp._extents.xMax()-sp._extents.xMin())/(float)sp._numValuesX;
-                sourceResolutionY = (sp._extents.yMax()-sp._extents.yMin())/(float)sp._numValuesY;
+                sourceResolutionX = (sp._extents.xMax() - sp._extents.xMin()) / (double)sp._numValuesX;
+                sourceResolutionY = (sp._extents.yMax() - sp._extents.yMin()) / (double)sp._numValuesY;
             }
 
             std::string sourceSetName;
@@ -203,16 +205,16 @@ void DestinationTile::computeMaximumSourceResolution(Source* source)
                 case(Source::IMAGE):
                 {
                     ImageData& imageData = getImageData(source->getLayer(), sourceSetName);
-                    if (imageData._image_maxSourceResolutionX==0.0f) imageData._image_maxSourceResolutionX=sourceResolutionX;
+                    if (imageData._image_maxSourceResolutionX==0.0) imageData._image_maxSourceResolutionX=sourceResolutionX;
                     else imageData._image_maxSourceResolutionX=osg::minimum(imageData._image_maxSourceResolutionX,sourceResolutionX);
-                    if (imageData._image_maxSourceResolutionY==0.0f) imageData._image_maxSourceResolutionY=sourceResolutionY;
+                    if (imageData._image_maxSourceResolutionY==0.0) imageData._image_maxSourceResolutionY=sourceResolutionY;
                     else imageData._image_maxSourceResolutionY=osg::minimum(imageData._image_maxSourceResolutionY,sourceResolutionY);
                     break;
                 }
                 case(Source::HEIGHT_FIELD):
-                    if (_terrain_maxSourceResolutionX==0.0f) _terrain_maxSourceResolutionX=sourceResolutionX;
+                    if (_terrain_maxSourceResolutionX==0.0) _terrain_maxSourceResolutionX=sourceResolutionX;
                     else _terrain_maxSourceResolutionX=osg::minimum(_terrain_maxSourceResolutionX,sourceResolutionX);
-                    if (_terrain_maxSourceResolutionY==0.0f) _terrain_maxSourceResolutionY=sourceResolutionY;
+                    if (_terrain_maxSourceResolutionY==0.0) _terrain_maxSourceResolutionY=sourceResolutionY;
                     else _terrain_maxSourceResolutionY=osg::minimum(_terrain_maxSourceResolutionY,sourceResolutionY);
                     break;
                 default:
@@ -246,7 +248,7 @@ bool DestinationTile::computeImageResolution(unsigned int layer, const std::stri
     bool result = false;
     ImageData& imageData = getImageData(layer,setname);
 
-    if (imageData._image_maxSourceResolutionX!=0.0f && imageData._image_maxSourceResolutionY!=0.0f &&
+    if (imageData._image_maxSourceResolutionX!=0.0 && imageData._image_maxSourceResolutionY!=0.0f &&
         _dataSet->getLayerMaximumTileImageSize(layer)!=0)
     {
         // set up properly for vector and raster (previously always vector)
@@ -255,13 +257,13 @@ bool DestinationTile::computeImageResolution(unsigned int layer, const std::stri
         unsigned int numRowsAtFullRes;
         if (_dataType == SpatialProperties::VECTOR)
         {
-            numColumnsAtFullRes = 1+(unsigned int)ceilf((_extents.xMax()-_extents.xMin())/imageData._image_maxSourceResolutionX);
-            numRowsAtFullRes = 1+(unsigned int)ceilf((_extents.yMax()-_extents.yMin())/imageData._image_maxSourceResolutionY);
+            numColumnsAtFullRes = 1+(unsigned int)ceil((_extents.xMax()-_extents.xMin())/imageData._image_maxSourceResolutionX);
+            numRowsAtFullRes = 1 + (unsigned int)ceil((_extents.yMax() - _extents.yMin()) / imageData._image_maxSourceResolutionY);
         }
         else    // if (_dataType == SpatialProperties::RASTER)
         {
-            numColumnsAtFullRes = (unsigned int)ceilf((_extents.xMax()-_extents.xMin())/imageData._image_maxSourceResolutionX);
-            numRowsAtFullRes = (unsigned int)ceilf((_extents.yMax()-_extents.yMin())/imageData._image_maxSourceResolutionY);
+            numColumnsAtFullRes = (unsigned int)ceil((_extents.xMax() - _extents.xMin()) / imageData._image_maxSourceResolutionX);
+            numRowsAtFullRes = (unsigned int)ceil((_extents.yMax() - _extents.yMin()) / imageData._image_maxSourceResolutionY);
         }
 
         unsigned int numColumnsRequired = osg::minimum(_dataSet->getLayerMaximumTileImageSize(layer),numColumnsAtFullRes);
@@ -313,7 +315,7 @@ bool DestinationTile::computeImageResolution(unsigned int layer, const std::stri
 
 bool DestinationTile::computeTerrainResolution(unsigned int& numColumns, unsigned int& numRows, double& resX, double& resY)
 {
-    if (_terrain_maxSourceResolutionX!=0.0f && _terrain_maxSourceResolutionY!=0.0f &&
+    if (_terrain_maxSourceResolutionX!=0.0 && _terrain_maxSourceResolutionY!=0.0f &&
         _terrain_maxNumColumns!=0 && _terrain_maxNumRows!=0)
     {
         // set up properly for vector and raster (previously always vector)
@@ -419,13 +421,83 @@ void DestinationTile::allocate()
 
                 imageData._imageDestination->_image->setFileName(imageName.c_str());
                 imageData._imageDestination->_image->setWriteHint(writeHint);
+                imageData._imageDestination->_image->allocateImage(texture_numColumns, texture_numRows, 1, getPixelFormat(layerNum), getPixelType(layerNum));
 
-                imageData._imageDestination->_image->allocateImage(texture_numColumns,texture_numRows,1,getPixelFormat(layerNum),getPixelType(layerNum));
-                unsigned char* data = imageData._imageDestination->_image->data();
-                unsigned int totalSize = imageData._imageDestination->_image->getTotalSizeInBytesIncludingMipmaps();
-                for(unsigned int i=0;i<totalSize;++i)
-                {
+                if (_defaultTexture.valid()) {
+                  // Initialize with repeated default image
+                  osg::ref_ptr<osg::Image> defaultImage = _defaultTexture->getImage();
+                  osg::ref_ptr<osg::Image> scaledDefaultImage;
+                  double defaultScale = _defaultTextureResolution / texture_dx;
+                  if (defaultScale != 1.0) {
+                    scaledDefaultImage = dynamic_cast<osg::Image *>(defaultImage->clone(osg::CopyOp::DEEP_COPY_ALL));
+                    scaledDefaultImage->scaleImage(int(defaultImage->s() * defaultScale + 0.5), int(defaultImage->t() * defaultScale + 0.5), 1);
+                  }
+                  else {
+                    scaledDefaultImage = defaultImage;
+                  }
+
+                  double extentWidth = _extents.xMax() - _extents.xMin();
+                  double extentHeight = _extents.yMax() - _extents.yMin();
+                  double defaultWidth = defaultImage->s() * _defaultTextureResolution;
+                  double defaultHeight = defaultImage->t() * _defaultTextureResolution;
+                  int numRepetitionsX = int(ceil(extentWidth / defaultWidth));
+                  int numRepetitionsY = int(ceil(extentHeight / defaultHeight));
+
+                  osg::PixelStorageModes psm;
+                  psm.pack_alignment = imageData._imageDestination->_image->getPacking();
+                  psm.pack_row_length = imageData._imageDestination->_image->s();
+                  psm.unpack_alignment = scaledDefaultImage->getPacking();
+                  psm.unpack_row_length = scaledDefaultImage->s();
+                  GLenum pixelFormat = imageData._imageDestination->_image->getPixelFormat();
+
+                  // Size in pixels of first default image after being virtually repeated from the origin
+                  int firstWidth = int((defaultWidth - fmod(_extents.xMin(), defaultWidth)) / texture_dx + 0.5);
+                  int firstHeight = int((defaultHeight - fmod(_extents.yMin(), defaultHeight)) / texture_dy + 0.5);
+                  int lastWidth = int((0 + fmod(_extents.xMax(), defaultWidth)) / texture_dx + 0.5);
+                  int lastHeight = int((0 + fmod(_extents.yMax(), defaultHeight)) / texture_dy + 0.5);
+
+                  if (firstWidth < scaledDefaultImage->s())
+                    ++numRepetitionsX;
+                  if (firstHeight < scaledDefaultImage->t())
+                    ++numRepetitionsY;
+
+                  unsigned int targetTOffset = 0;
+                  for (int y = 0; y < numRepetitionsY; ++y) {
+                    if (targetTOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->t()))
+                      continue;
+                    unsigned int targetSOffset = 0;
+                    unsigned int sourceTOffset = (y == 0 ? scaledDefaultImage->t() - firstHeight : 0);
+                    GLsizei clonedHeight = (y == 0 ? firstHeight : (y == numRepetitionsY - 1 ? lastHeight : scaledDefaultImage->t()));
+                    clonedHeight = std::min<unsigned int>(clonedHeight, imageData._imageDestination->_image->t() - targetTOffset);
+
+                    for (int x = 0; x < numRepetitionsX; ++x) {
+                      if (targetSOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->s()))
+                        continue;
+                      unsigned int sourceSOffset = (x == 0 ? scaledDefaultImage->s() - firstWidth : 0);
+
+                      unsigned char *sourceData = scaledDefaultImage->data(sourceSOffset, sourceTOffset, 0);
+                      unsigned char *destinationData = imageData._imageDestination->_image->data(targetSOffset, targetTOffset, 0);
+                      GLsizei clonedWidth = (x == 0 ? firstWidth : (x == numRepetitionsX - 1 ? lastWidth : scaledDefaultImage->s()));
+                      clonedWidth = std::min<unsigned int>(clonedWidth, imageData._imageDestination->_image->s() - targetSOffset);
+
+                      osg::gluScaleImage(&psm, pixelFormat,
+                        clonedWidth, clonedHeight, scaledDefaultImage->getDataType(), sourceData,
+                        clonedWidth, clonedHeight, imageData._imageDestination->_image->getDataType(), destinationData
+                      );
+
+                      targetSOffset += (x == 0 ? firstWidth : scaledDefaultImage->s());
+                    }
+                    targetTOffset += (y == 0 ? firstHeight : scaledDefaultImage->t());
+                  }
+                }
+                else {
+                  // No default image, initialize with black
+                  unsigned char* data = imageData._imageDestination->_image->data();
+                  unsigned int totalSize = imageData._imageDestination->_image->getTotalSizeInBytesIncludingMipmaps();
+                  for (unsigned int i = 0; i < totalSize; ++i)
+                  {
                     *(data++) = 0;
+                  }
                 }
             }
         }
@@ -1441,6 +1513,30 @@ osg::StateSet* DestinationTile::createStateSet()
     return _stateset.get();
 }
 
+osg::StateSet* DestinationTile::createDefaultGeometryAndStateSet(osg::Geometry *geometry)
+{
+    _stateset = new osg::StateSet();
+    _stateset->setTextureAttributeAndModes(0, _defaultTexture, osg::StateAttribute::ON);
+    osg::Array *array = geometry->getVertexArray();
+    if (array) {
+      double defaultWidth = _defaultTexture->getImage()->s() * _defaultTextureResolution;
+      double defaultHeight = _defaultTexture->getImage()->t() * _defaultTextureResolution;
+      osg::Vec2 offset(fmod(_extents.xMin(), defaultWidth), fmod(_extents.yMin(), defaultHeight));
+      osg::Vec2 size(_extents.xMax() - _extents.xMin(), _extents.yMax() - _extents.yMin());
+      osg::Vec2 localLowerLeft = osg::Vec2(_extents.xMin() - _localToWorld(3, 0), _extents.yMin() -  _localToWorld(3, 1));
+      osg::Vec3Array *vertices = dynamic_cast<osg::Vec3Array *>(array);
+      osg::Vec2Array *textureCoords = new osg::Vec2Array();
+      for (osg::Vec3Array::iterator iter = vertices->begin(); iter != vertices->end(); ++iter) {
+        textureCoords->push_back(osg::Vec2(
+          (iter->x() - localLowerLeft.x() + offset.x()) / defaultWidth,
+          (iter->y() - localLowerLeft.y() + offset.y()) / defaultHeight
+        ));
+      }
+      geometry->setTexCoordArray(0, textureCoords);
+    }
+    return _stateset;
+}
+
 osg::Node* DestinationTile::createHeightField()
 {
     osg::ShapeDrawable* shapeDrawable = 0;
@@ -2410,6 +2506,11 @@ osg::Node* DestinationTile::createPolygonal()
 
 
     osg::StateSet* stateset = createStateSet();
+    if (!stateset && _defaultTexture.valid()) {
+      // Completely non-filled but we have default image, repeat it correctly
+      stateset = createDefaultGeometryAndStateSet(geometry);
+    }
+
     if (stateset)
     {
         geometry->setStateSet(stateset);

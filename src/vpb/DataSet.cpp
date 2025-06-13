@@ -365,6 +365,8 @@ CompositeDestination* DataSet::createDestinationTile(int currentLevel, int curre
     tile->_extents = extents;
     tile->_parent = destinationGraph;
 
+    tile->setDefaultTexture(_defaultTexture, _defaultTextureResolution);
+
     // set to NONE as the tile is a mix of RASTER and VECTOR
     // that way the default of RASTER for image and VECTOR for height is maintained
     tile->_dataType = SpatialProperties::NONE;
@@ -756,6 +758,8 @@ CompositeDestination* DataSet::createDestinationGraph(CompositeDestination* pare
     tile->_cs = cs;
     tile->_extents = extents;
     tile->_parent = destinationGraph;
+
+    tile->setDefaultTexture(_defaultTexture, _defaultTextureResolution);
 
     // set to NONE as the tile is a mix of RASTER and VECTOR
     // that way the default of RASTER for image and VECTOR for height is maintained

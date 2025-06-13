@@ -19,6 +19,7 @@
 
 #include <osg/Notify>
 #include <osg/io_utils>
+#include <osg/Texture2D>
 
 #include <osgSim/ShapeAttribute>
 
@@ -535,6 +536,8 @@ void Commandline::getUsage(osg::ApplicationUsage& usage)
     usage.addCommandLineOption("--max-visible-distance-of-top-level","Set the maximum visible distance that the top most tile can be viewed at.");
     usage.addCommandLineOption("--no-terrain-simplification","Switch off terrain simplification.");
     usage.addCommandLineOption("--default-color <r,g,b,a>","Sets the default color of the terrain.");
+    usage.addCommandLineOption("--default-image <path>", "Sets the default repeatable image.");
+    usage.addCommandLineOption("--default-image-size <size>", "Sets the default repeatable image size in meters.");
     usage.addCommandLineOption("--radius-to-max-visible-distance-ratio","Set the maximum visible distance ratio for all tiles apart from the top most tile. The maximum visuble distance is computed from the ratio * tile radius.");
     usage.addCommandLineOption("--no-mip-mapping","Disable mip mapping of textures.");
     usage.addCommandLineOption("--mip-mapping-hardware","Use mip mapped textures, and generate the mipmaps in hardware when available.");
@@ -654,8 +657,8 @@ bool Commandline::readImageOptions(int pos, std::ostream& fout, osg::ArgumentPar
     if (arguments.read(pos, "--tile-image-size",image_size)) { imageOptions.setMaximumTileImageSize(image_size); readField = true;}
 
     std::string str;
-    if (arguments.read("pos, --default-color",str) ||
-        arguments.read("pos, --default_color",str))
+    if (arguments.read(pos, "--default-color",str) ||
+        arguments.read(pos, "--default_color",str))
     {
         osg::Vec4 defaultColor;
         if( sscanf( str.c_str(), "%f,%f,%f,%f",
@@ -980,7 +983,20 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         fout<<"--spherical, new radius set to "<<radius<<std::endl;
     }
 
-
+    std::string defaultImagePath;
+    double defaultImageSize = 0.0;
+    if (arguments.read("--default-image", defaultImagePath) && arguments.read("--default-image-size", defaultImageSize)) {
+      osg::ref_ptr<osg::Image> defaultImage = osgDB::readImageFile(defaultImagePath);
+      if (defaultImage.valid()) {
+        defaultImage->setWriteHint(osg::Image::STORE_INLINE);
+        osg::ref_ptr<osg::Texture2D> defaultTexture = new osg::Texture2D(defaultImage);
+        defaultTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+        defaultTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+        defaultTexture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+        defaultTexture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+        buildOptions->setDefaultTexture(defaultTexture, defaultImageSize / defaultImage->s());
+      }
+    }
 
     while (arguments.read("--height-attribute",heightAttributeName)) {}
 
