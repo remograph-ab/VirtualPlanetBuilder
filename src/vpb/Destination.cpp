@@ -11,11 +11,12 @@
  * OpenSceneGraph Public License for more details.
 */
 
-
 #include <vpb/Source>
 #include <vpb/Destination>
 #include <vpb/DataSet>
 #include <vpb/TextureUtils>
+#include <vpb/RamerDouglasPeucker>
+#include <vpb/CreateCurtainsVisitor>
 
 #include <osg/Texture2D>
 #include <osg/ShapeDrawable>
@@ -33,8 +34,10 @@
 
 #include <osgUtil/SmoothingVisitor>
 #include <osgUtil/Simplifier>
+#include <osgUtil/DelaunayTriangulator>
 
 using namespace vpb;
+
 
 #define SHIFT_RASTER_BY_HALF_CELL
 
@@ -86,7 +89,8 @@ DestinationTile::DestinationTile():
     _terrain_maxSourceResolutionX(0.0),
     _terrain_maxSourceResolutionY(0.0),
     _complete(false),
-    _defaultTextureResolution(0.0)
+    _defaultTextureResolution(0.0),
+    _flat(false)
 {
     for(int i=0;i<NUMBER_OF_POSITIONS;++i)
     {
@@ -466,14 +470,14 @@ void DestinationTile::allocate()
                     if (targetTOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->t()))
                       continue;
                     unsigned int targetSOffset = 0;
-                    unsigned int sourceTOffset = (y == 0 ? scaledDefaultImage->t() - firstHeight : 0);
+                    unsigned int sourceTOffset = (y == 0 ? std::max<int>(scaledDefaultImage->t() - firstHeight, 0) : 0);
                     GLsizei clonedHeight = (y == 0 ? firstHeight : (y == numRepetitionsY - 1 ? lastHeight : scaledDefaultImage->t()));
                     clonedHeight = std::min<unsigned int>(clonedHeight, imageData._imageDestination->_image->t() - targetTOffset);
 
                     for (int x = 0; x < numRepetitionsX; ++x) {
                       if (targetSOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->s()))
                         continue;
-                      unsigned int sourceSOffset = (x == 0 ? scaledDefaultImage->s() - firstWidth : 0);
+                      unsigned int sourceSOffset = (x == 0 ? std::max<int>(scaledDefaultImage->s() - firstWidth, 0) : 0);
 
                       unsigned char *sourceData = scaledDefaultImage->data(sourceSOffset, sourceTOffset, 0);
                       unsigned char *destinationData = imageData._imageDestination->_image->data(targetSOffset, targetTOffset, 0);
@@ -516,6 +520,11 @@ void DestinationTile::allocate()
                                     _extents.xMin(), _extents.yMax(),   0.0,1.0);
         _terrain->_heightField = new osg::HeightField;
         _terrain->_heightField->allocate(dem_numColumns,dem_numRows);
+        
+        // Save size for any flat raster created, to avoid default 8x8, to avoid t-vertices
+        _terrain->_dataSet->_flatNumCols = dem_numColumns;
+        _terrain->_dataSet->_flatNumRows = dem_numRows;
+
         _terrain->_heightField->setOrigin(osg::Vec3(_extents.xMin(),_extents.yMin(),0.0f));
         _terrain->_heightField->setXInterval(dem_dx);
         _terrain->_heightField->setYInterval(dem_dy);
@@ -1105,7 +1114,7 @@ void DestinationTile::equalizeBoundaries()
 }
 
 
-void DestinationTile::optimizeResolution()
+void DestinationTile::optimizeResolution(const bool &forceLowres)
 {
     if (_terrain.valid() && _terrain->_heightField.valid())
     {
@@ -1133,11 +1142,20 @@ void DestinationTile::optimizeResolution()
             unsigned int numColumns = minimumSize;
             unsigned int numRows = minimumSize;
             
+            if (!forceLowres) {
+              // Rather use previously saved size than default 8x8, to avoid t-vertices
+              if (_terrain->_dataSet->_flatNumCols != 0)
+                numColumns = _terrain->_dataSet->_flatNumCols;
+              if (_terrain->_dataSet->_flatNumRows != 0)
+                numRows = _terrain->_dataSet->_flatNumRows;
+            }
+
             float ratio_y_over_x = (_extents.yMax()-_extents.yMin())/(_extents.xMax()-_extents.xMin());
             if (ratio_y_over_x > 1.2) numRows = (unsigned int)ceilf((float)numRows*ratio_y_over_x);
             else if (ratio_y_over_x < 0.8) numColumns = (unsigned int)ceilf((float)numColumns/ratio_y_over_x);
             
-            
+            _flat = true;
+
             hf->allocate(numColumns,numRows);
             hf->setOrigin(osg::Vec3(_extents.xMin(),_extents.yMin(),0.0f));
             hf->setXInterval((_extents.xMax()-_extents.xMin())/(float)(numColumns-1));
@@ -1548,7 +1566,17 @@ osg::Node* DestinationTile::createHeightField()
         log(osg::INFO,"**** No terrain to build tile from use flat terrain fallback ****");
         // create a dummy height field to file in the gap
         _terrain->_heightField = new osg::HeightField;
-        _terrain->_heightField->allocate(8,8);
+
+        unsigned int numColumns = 8;
+        unsigned int numRows = 8;
+
+        // Rather use previously saved size than default 8x8, to avoid t-vertices
+        if (_terrain->_dataSet->_flatNumCols != 0)
+          numColumns = _terrain->_dataSet->_flatNumCols;
+        if (_terrain->_dataSet->_flatNumRows != 0)
+          numRows = _terrain->_dataSet->_flatNumRows;
+
+        _terrain->_heightField->allocate(numColumns, numRows);
         _terrain->_heightField->setOrigin(osg::Vec3(_extents.xMin(),_extents.yMin(),0.0f));
         _terrain->_heightField->setXInterval(_extents.xMax()-_extents.xMin()/7.0);
         _terrain->_heightField->setYInterval(_extents.yMax()-_extents.yMin()/7.0);
@@ -1685,7 +1713,17 @@ osg::Node* DestinationTile::createTerrainTile()
         log(osg::INFO,"**** No terrain to build tile from use flat terrain fallback ****");
         // create a dummy height field to file in the gap
         _terrain->_heightField = new osg::HeightField;
-        _terrain->_heightField->allocate(8,8);
+
+        unsigned int numColumns = 8;
+        unsigned int numRows = 8;
+
+        // Rather use previously saved size than default 8x8, to avoid t-vertices
+        if (_terrain->_dataSet->_flatNumCols != 0)
+          numColumns = _terrain->_dataSet->_flatNumCols;
+        if (_terrain->_dataSet->_flatNumRows != 0)
+          numRows = _terrain->_dataSet->_flatNumRows;
+
+        _terrain->_heightField->allocate(numColumns, numRows);
         _terrain->_heightField->setOrigin(osg::Vec3(_extents.xMin(),_extents.yMin(),0.0f));
         _terrain->_heightField->setXInterval((_extents.xMax()-_extents.xMin())/7.0);
         _terrain->_heightField->setYInterval((_extents.yMax()-_extents.yMin())/7.0);
@@ -1971,7 +2009,13 @@ osg::Node* DestinationTile::createPolygonal()
         grid->setYInterval(double(_extents.yMax()-_extents.yMin())/double(numRows-1));
         
         if (!_terrain) _terrain = new DestinationData(_dataSet);
-        
+
+        // Save size for any flat raster created, to avoid default 8x8, to avoid t-vertices
+        if (_terrain->_dataSet->_flatNumCols == 0)
+          _terrain->_dataSet->_flatNumCols = numColumns;
+        if (_terrain->_dataSet->_flatNumRows == 0)
+          _terrain->_dataSet->_flatNumRows = numRows;
+
         _terrain->_heightField = grid;
     }
 
@@ -1990,9 +2034,8 @@ osg::Node* DestinationTile::createPolygonal()
     // compute sizes.
     unsigned int numColumns = grid->getNumColumns();
     unsigned int numRows = grid->getNumRows();
-    unsigned int numVerticesInBody = numColumns*numRows;
-    unsigned int numVerticesInSkirt = createSkirt ? numColumns*2 + numRows*2 - 4 : 0;
-    unsigned int numVertices = numVerticesInBody+numVerticesInSkirt;
+    unsigned int origNumVertices = numColumns*numRows;
+    unsigned int numVertices = origNumVertices;
 
 
     // create the geometry.
@@ -2003,9 +2046,6 @@ osg::Node* DestinationTile::createPolygonal()
     osg::Vec4ubArray& color = *(new osg::Vec4ubArray(1));
 
     color[0].set(255,255,255,255);
-
-    osg::ref_ptr<osg::Vec3Array> n = new osg::Vec3Array(numVertices); // must use ref_ptr so the array isn't removed when smooothvisitor is used
-    
 
     _localToWorld.makeIdentity();
     _worldToLocal.makeIdentity();
@@ -2082,6 +2122,22 @@ osg::Node* DestinationTile::createPolygonal()
         skirtVector.set(0.0f,0.0f,-skirtLength);
     }
     
+    double maximumError = _dataSet->getMaximumError();
+
+    // Simplify border vertices
+    std::vector<unsigned int> simplifiedBottomColumns;
+    std::vector<unsigned int> simplifiedRightRows;
+    std::vector<unsigned int> simplifiedTopRows;
+    std::vector<unsigned int> simplifiedLeftRows;
+    if (maximumError > 0.0) {
+        RamerDouglasPeucker::simplifyBorderVertices(
+            grid, numColumns, numRows,
+            simplifiedBottomColumns, simplifiedRightRows,
+            simplifiedTopRows, simplifiedLeftRows,
+            static_cast<float>(maximumError)
+        );
+    }
+
     unsigned int vi=0;
     unsigned int r,c;
     
@@ -2097,10 +2153,28 @@ osg::Node* DestinationTile::createPolygonal()
     float max_cluster_culling_height = 0.0f;
     float max_cluster_culling_radius = 0.0f;
 
+    // Collect border vertices to use as Delaunay constraints
+    osg::ref_ptr<osg::Vec3Array> bottomBorderVertices = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> topBorderVertices = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> leftBorderVertices = new osg::Vec3Array();
+    osg::ref_ptr<osg::Vec3Array> rightBorderVertices = new osg::Vec3Array();
+
     for(r=0;r<numRows;++r)
     {
         for(c=0;c<numColumns;++c)
         {
+            if (maximumError > 0.0) {
+                // Skip already simplified border vertices
+                if (r == 0 && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
+                    continue;
+                if (r == numRows - 1 && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
+                    continue;
+                if (c == 0 && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
+                    continue;
+                if (c == numColumns - 1 && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
+                    continue;
+            }
+
             double X = orig_X + delta_X*(double)c;
             double Y = orig_Y + delta_Y*(double)r;
             double Z = orig_Z + grid->getHeight(c,r);
@@ -2112,15 +2186,40 @@ osg::Node* DestinationTile::createPolygonal()
                                              X,Y,Z);
             }
 
+            osg::Vec3 pos;
+
             if (useLocalToTileTransform)
             {
-                v[vi] = computeLocalPosition(_worldToLocal,X,Y,Z);
+                pos = computeLocalPosition(_worldToLocal,X,Y,Z);
             }
             else
             {
-                v[vi].set(X,Y,Z);
+                pos.set(X,Y,Z);
             }
 
+            // Collect border vertices to use as Delaunay constraints
+            bool isBorder = false;
+            if (r == 0) {
+                bottomBorderVertices->push_back(pos);
+                isBorder = true;
+            }
+            else if (r == numRows - 1) {
+                topBorderVertices->insert(topBorderVertices->begin(), pos);
+                isBorder = true;
+            }
+            else if (c == 0) {
+                leftBorderVertices->insert(leftBorderVertices->begin(), pos);
+                isBorder = true;
+            }
+            else if (c == numColumns - 1) {
+                rightBorderVertices->push_back(pos);
+                isBorder = true;
+            }
+            if (isBorder) {
+                continue;
+            }
+
+            v[vi] = pos;
 
             if (useClusterCullingCallback)
             {
@@ -2148,13 +2247,6 @@ osg::Node* DestinationTile::createPolygonal()
                 }
             }
 
-            // note normal will need rotating.
-            if (n.valid())
-            {
-                (*n)[vi] = grid->getNormal(c,r);
-                
-            }
-
             t[vi].x() = (c==numColumns-1)? 1.0f : (float)(c)/(float)(numColumns-1);
             t[vi].y() = (r==numRows-1)? 1.0f : (float)(r)/(float)(numRows-1);
 
@@ -2163,17 +2255,15 @@ osg::Node* DestinationTile::createPolygonal()
         }
     }
     
-
+    // Resize to number of vertices after border simplifcation
+    if (vi < numVertices) {
+      numVertices = vi;
+      (&v)->resize(numVertices);
+      (&t)->resize(numVertices);
+    }
 
     //geometry->setUseDisplayList(false);
     geometry->setVertexArray(&v);
-
-    if (n.valid())
-    {
-        geometry->setNormalArray(n.get());
-        geometry->setNormalBinding(osg::Geometry::BIND_PER_VERTEX);
-    }
-
     geometry->setColorArray(&color);
     geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
 
@@ -2203,192 +2293,200 @@ osg::Node* DestinationTile::createPolygonal()
             }
         }
     }
-    
-    osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
-    geometry->addPrimitiveSet(&drawElements);
-    int ei=0;
-    for(r=0;r<numRows-1;++r)
-    {
-        for(c=0;c<numColumns-1;++c)
-        {
-            unsigned int i00 = (r)*numColumns+c;
-            unsigned int i10 = (r)*numColumns+c+1;
-            unsigned int i01 = (r+1)*numColumns+c;
-            unsigned int i11 = (r+1)*numColumns+c+1;
 
-            float diff_00_11 = fabsf(v[i00].z()-v[i11].z());
-            float diff_01_10 = fabsf(v[i01].z()-v[i10].z());
-            if (diff_00_11<diff_01_10)
-            {
-                // diagonal between 00 and 11
-                drawElements[ei++] = i00;
-                drawElements[ei++] = i10;
-                drawElements[ei++] = i11;
+    // Delaunay-triangulate tile
+    std::map<osg::Vec3, unsigned int> normalIndexMap;
+    for (unsigned int i = 0; i < v.size(); ++i)
+        normalIndexMap[v[i]] = i;
 
-                drawElements[ei++] = i00;
-                drawElements[ei++] = i11;
-                drawElements[ei++] = i01;
-            }
-            else
-            {
-                // diagonal between 01 and 10
-                drawElements[ei++] = i01;
-                drawElements[ei++] = i00;
-                drawElements[ei++] = i10;
+    osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(&v);
 
-                drawElements[ei++] = i01;
-                drawElements[ei++] = i10;
-                drawElements[ei++] = i11;
-            }
-        }
+    // Add Delaunay constraints for borders
+    osg::ref_ptr<osgUtil::DelaunayConstraint> delaunayConstraint = new osgUtil::DelaunayConstraint();
+    osg::ref_ptr<osg::Vec3Array> borderVertices = new osg::Vec3Array();
+    borderVertices->insert(borderVertices->end(), bottomBorderVertices->begin(), bottomBorderVertices->end());
+    borderVertices->insert(borderVertices->end(), rightBorderVertices->begin(), rightBorderVertices->end());
+    borderVertices->insert(borderVertices->end(), topBorderVertices->begin(), topBorderVertices->end());
+    borderVertices->insert(borderVertices->end(), leftBorderVertices->begin(), leftBorderVertices->end());
+    delaunayConstraint->setVertexArray(borderVertices);
+    delaunayConstraint->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINE_STRIP, 0, borderVertices->size()));
+    delaunayTriangulator->addInputConstraint(delaunayConstraint);
+
+    if (delaunayTriangulator->triangulate()) {
+        geometry->addPrimitiveSet(delaunayTriangulator->getTriangles());
     }
-
-#if 1
-    osgUtil::SmoothingVisitor sv;
-    sv.smooth(*geometry);  // this will replace the normal vector with a new one
-
-    // now we have to reassign the normals back to the orignal pointer.
-    n = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
-    if (n.valid() && n->size()!=numVertices) n->resize(numVertices);
-#endif
-    // now apply the normals computed through equalization
-    for(unsigned int position=0; position<NUMBER_OF_POSITIONS; ++position)
-    {
-        if (!_heightDeltas[position].empty())
+    else {
+        // Failed delaunay, fallback to regular mesh
+        std::cerr << std::endl << "ERROR: Failed performing Delaunay triangulation, fallback to regular simplified mesh" << std::endl;
+        osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
+        geometry->addPrimitiveSet(&drawElements);
+        int ei=0;
+        for(r=0;r<numRows-1;++r)
         {
-            // we have normal to apply
-            unsigned int i=0;
-            unsigned int j=0;
-            unsigned int deltai=0;
-            unsigned int deltaj=0;
-            switch(position)
+            for(c=0;c<numColumns-1;++c)
             {
-                case LEFT:
-                    i = 0;
-                    j = 1;
-                    deltai = 0;
-                    deltaj = 1;
-                    break;
-                case LEFT_BELOW:
-                    i = 0;
-                    j = 0;
-                    deltai = 0;
-                    deltaj = 0;
-                    break;
-                case BELOW:
-                    i = 1;
-                    j = 0;
-                    deltai = 1;
-                    deltaj = 0;
-                    break;
-                case BELOW_RIGHT:
-                    i = numColumns-1;
-                    j = 0;
-                    deltai = 0;
-                    deltaj = 0;
-                    break;
-                case RIGHT:
-                    i = numColumns-1;
-                    j = 1;
-                    deltai = 0;
-                    deltaj = 1;
-                    break;
-                case RIGHT_ABOVE:
-                    i = numColumns-1;
-                    j = numRows-1;
-                    deltai = 0;
-                    deltaj = 0;
-                    break;
-                case ABOVE:
-                    i = 1;
-                    j = numRows-1;
-                    deltai = 1;
-                    deltaj = 0;
-                    break;
-                case ABOVE_LEFT:
-                    i = 0;
-                    j = numRows-1;
-                    deltai = 0;
-                    deltaj = 0;
-                    break;
-            }
-            
+                unsigned int i00 = (r)*numColumns+c;
+                unsigned int i10 = (r)*numColumns+c+1;
+                unsigned int i01 = (r+1)*numColumns+c;
+                unsigned int i11 = (r+1)*numColumns+c+1;
 
-            // need to reproject normals.
-            for(HeightDeltaList::iterator itr = _heightDeltas[position].begin();
-                itr != _heightDeltas[position].end();
-                ++itr, i += deltai, j += deltaj)
-            {
-                osg::Vec3& normal = (*n)[i + j*numColumns];
-                osg::Vec2 heightDelta = *itr;
-
-                if (mapLatLongsToXYZ)
+                float diff_00_11 = fabsf(v[i00].z()-v[i11].z());
+                float diff_01_10 = fabsf(v[i01].z()-v[i10].z());
+                if (diff_00_11<diff_01_10)
                 {
-                
-                    double X = orig_X + delta_X*(double)i;
-                    double Y = orig_Y + delta_Y*(double)j;
-                    double Z = orig_Z + grid->getHeight(i,j);
-                    osg::Matrixd normalLocalToWorld;
-                    et->computeLocalToWorldTransformFromLatLongHeight(osg::DegreesToRadians(Y),osg::DegreesToRadians(X),Z,normalLocalToWorld);
-                    osg::Matrixd normalToLocalReferenceFrame(normalLocalToWorld*_worldToLocal);
+                    // diagonal between 00 and 11
+                    drawElements[ei++] = i00;
+                    drawElements[ei++] = i10;
+                    drawElements[ei++] = i11;
 
-                    // need to compute the x and y delta for this point in space.
-                    double X0, Y0, Z0;
-                    double X1, Y1, Z1;
-                    double X2, Y2, Z2;
-
-                    et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y),osg::DegreesToRadians(X),Z,
-                                                 X0,Y0,Z0);
-
-                    et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y),osg::DegreesToRadians(X+delta_X),Z,
-                                                 X1,Y1,Z1);
-
-                    et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y+delta_Y),osg::DegreesToRadians(X),Z,
-                                                 X2,Y2,Z2);
-                                               
-                    X1 -= X0;
-                    Y1 -= Y0;
-                    Z1 -= Z0;
-                                               
-                    X2 -= X0;
-                    Y2 -= Y0;
-                    Z2 -= Z0;
-
-                    float xInterval = sqrt(X1*X1 + Y1*Y1 + Z1*Z1);
-                    float yInterval = sqrt(X2*X2 + Y2*Y2 + Z2*Z2);
-
-                    // need to set up the normal from the scaled heightDelta.
-                    normal.x() = -heightDelta.x() / xInterval;
-                    normal.y() = -heightDelta.y() / yInterval;
-                    normal.z() = 1.0f;
-
-                    normal = osg::Matrixd::transform3x3(normal,normalToLocalReferenceFrame);
-                    normal.normalize();
-                    
+                    drawElements[ei++] = i00;
+                    drawElements[ei++] = i11;
+                    drawElements[ei++] = i01;
                 }
                 else
                 {
-                    normal.x() = -heightDelta.x() / grid->getXInterval();
-                    normal.y() = -heightDelta.y() / grid->getYInterval();
-                    normal.z() = 1.0f;
-                    normal.normalize();
-               }
-            }
+                    // diagonal between 01 and 10
+                    drawElements[ei++] = i01;
+                    drawElements[ei++] = i00;
+                    drawElements[ei++] = i10;
 
+                    drawElements[ei++] = i01;
+                    drawElements[ei++] = i10;
+                    drawElements[ei++] = i11;
+                }
+            }
+        }
+    }
+
+    // Smooth-shade (will create discontinous tile border normals)
+    osgUtil::SmoothingVisitor sv;
+    sv.smooth(*geometry);
+
+    // Apply tile border normals computed through equalization
+    osg::ref_ptr<osg::Vec3Array> n = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
+    osg::BoundingBox bbox = geometry->getBoundingBox();
+    unsigned int i = 0;
+    unsigned int j = 0;
+    unsigned int heightDeltaIndex = 0;
+    for (unsigned int vi = 0; vi < v.size(); ++vi) {
+        osg::Vec3 pos = v[vi];
+        unsigned int position = NUMBER_OF_POSITIONS;
+        unsigned int i = 0;
+        
+        if (pos.x() == bbox.xMin()) {
+            i = 0;
+            if (pos.y() == bbox.yMin()) {
+                position = LEFT_BELOW;
+                j = 0;
+                heightDeltaIndex = 0;
+            }
+            else if (pos.y() == bbox.yMax()) {
+                position = ABOVE_LEFT;
+                j = numRows - 1;
+                heightDeltaIndex = 0;
+            }
+            else {
+                position = LEFT;
+                j = (pos.y() - (bbox.yMin() + delta_Y)) / delta_Y;
+                heightDeltaIndex = j;
+            }
+        }
+        else if (pos.x() == bbox.xMax()) {
+            i = numColumns - 1;
+            if (pos.y() == bbox.yMin()) {
+                position = BELOW_RIGHT;
+                j = 0;
+                heightDeltaIndex = 0;
+            }
+            else if (pos.y() == bbox.yMax()) {
+                position = RIGHT_ABOVE;
+                j = numRows - 1;
+                heightDeltaIndex = 0;
+            }
+            else {
+                position = RIGHT;
+                j = (pos.y() - (bbox.yMin() + delta_Y)) / delta_Y;
+                heightDeltaIndex = j;
+            }
+        }
+        else if (pos.y() == bbox.yMin()) {
+            position = BELOW;
+            i = (pos.x() - (bbox.xMin() + delta_X)) / delta_X;
+            j = 0;
+            heightDeltaIndex = i;
+        }
+        else if (pos.y() == bbox.yMax()) {
+            position = ABOVE;
+            i = (pos.x() - (bbox.xMin() + delta_X)) / delta_X;
+            j = numRows - 1;
+            heightDeltaIndex = i;
+        }
+        else {
+            continue;
         }
 
-    }
+        if (_heightDeltas[position].empty())
+            continue;
 
-#if 0
-    std::cout<<"Normals");
-    for(osg::Vec3Array::iterator nitr = n->begin();
-        nitr != n->end();
-        ++nitr)
-    {
-        osg::Vec3& normal = *nitr;
-        std::cout<<"   Local normal = "<<normal<< " vs "<<transformed_center_normal);
+        if (heightDeltaIndex >= _heightDeltas[position].size()) {
+            std::cerr << "ERROR: Invalid height delta index " << heightDeltaIndex << " for position " << position << std::endl;
+            continue;
+        }
+
+        osg::Vec3& normal = (*n)[vi];
+        osg::Vec2 heightDelta = _heightDeltas[position][heightDeltaIndex];
+
+        if (mapLatLongsToXYZ)
+        {
+            double X = orig_X + delta_X*(double)i;
+            double Y = orig_Y + delta_Y*(double)j;
+            double Z = orig_Z + grid->getHeight(i,j);
+            osg::Matrixd normalLocalToWorld;
+            et->computeLocalToWorldTransformFromLatLongHeight(osg::DegreesToRadians(Y),osg::DegreesToRadians(X),Z,normalLocalToWorld);
+            osg::Matrixd normalToLocalReferenceFrame(normalLocalToWorld*_worldToLocal);
+
+            // need to compute the x and y delta for this point in space.
+            double X0, Y0, Z0;
+            double X1, Y1, Z1;
+            double X2, Y2, Z2;
+
+            et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y),osg::DegreesToRadians(X),Z,
+                                            X0,Y0,Z0);
+
+            et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y),osg::DegreesToRadians(X+delta_X),Z,
+                                            X1,Y1,Z1);
+
+            et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y+delta_Y),osg::DegreesToRadians(X),Z,
+                                            X2,Y2,Z2);
+                                               
+            X1 -= X0;
+            Y1 -= Y0;
+            Z1 -= Z0;
+                                               
+            X2 -= X0;
+            Y2 -= Y0;
+            Z2 -= Z0;
+
+            float xInterval = sqrt(X1*X1 + Y1*Y1 + Z1*Z1);
+            float yInterval = sqrt(X2*X2 + Y2*Y2 + Z2*Z2);
+
+            // need to set up the normal from the scaled heightDelta.
+            normal.x() = -heightDelta.x() / xInterval;
+            normal.y() = -heightDelta.y() / yInterval;
+            normal.z() = 1.0f;
+
+            normal = osg::Matrixd::transform3x3(normal,normalToLocalReferenceFrame);
+            normal.normalize();
+                    
+        }
+        else
+        {
+            normal.x() = -heightDelta.x() / grid->getXInterval();
+            normal.y() = -heightDelta.y() / grid->getYInterval();
+            normal.z() = 1.0f;
+            normal.normalize();
+        }
     }
-#endif
 
     if (useClusterCullingCallback)
     {
@@ -2401,109 +2499,6 @@ osg::Node* DestinationTile::createPolygonal()
                  max_cluster_culling_radius);
         geometry->setCullCallback(ccc);
     }
-    
-    osgUtil::Simplifier::IndexList pointsToProtectDuringSimplification;
-
-    if (numVerticesInSkirt>0)
-    {
-        osg::DrawElementsUInt& skirtDrawElements = *(new osg::DrawElementsUInt(GL_QUAD_STRIP,2*numVerticesInSkirt+2));
-        geometry->addPrimitiveSet(&skirtDrawElements);
-        int ei=0;
-        int firstSkirtVertexIndex = vi;
-        // create bottom skirt vertices
-        r=0;
-        for(c=0;c<numColumns-1;++c)
-        {
-            // assign indices to primitive set
-            skirtDrawElements[ei++] = (r)*numColumns+c;
-            skirtDrawElements[ei++] = vi;
-            
-            // mark these points as protected to prevent them from being removed during simplification
-            pointsToProtectDuringSimplification.push_back((r)*numColumns+c);
-            pointsToProtectDuringSimplification.push_back(vi);
-               
-            osg::Vec3 localSkirtVector = !mapLatLongsToXYZ ? 
-                                            skirtVector :
-                                            computeLocalSkirtVector(et, grid.get(), c, r, skirtLength, useLocalToTileTransform, _localToWorld);
-            
-            // add in the new point on the bottom of the skirt
-            v[vi] = v[(r)*numColumns+c]+localSkirtVector;
-            if (n.valid()) (*n)[vi] = (*n)[r*numColumns+c];
-            t[vi++] = t[(r)*numColumns+c];
-        }
-        // create right skirt vertices
-        c=numColumns-1;
-        for(r=0;r<numRows-1;++r)
-        {
-            // assign indices to primitive set
-            skirtDrawElements[ei++] = (r)*numColumns+c;
-            skirtDrawElements[ei++] = vi;
-            
-            // mark these points as protected to prevent them from being removed during simplification
-            pointsToProtectDuringSimplification.push_back((r)*numColumns+c);
-            pointsToProtectDuringSimplification.push_back(vi);
-
-            osg::Vec3 localSkirtVector = !mapLatLongsToXYZ ? 
-                                            skirtVector :
-                                            computeLocalSkirtVector(et, grid.get(), c, r, skirtLength, useLocalToTileTransform, _localToWorld);
-            
-            // add in the new point on the bottom of the skirt
-            v[vi] = v[(r)*numColumns+c]+localSkirtVector;
-            if (n.valid()) (*n)[vi] = (*n)[(r)*numColumns+c];
-            t[vi++] = t[(r)*numColumns+c];
-        }
-        // create top skirt vertices
-        r=numRows-1;
-        for(c=numColumns-1;c>0;--c)
-        {
-            // assign indices to primitive set
-            skirtDrawElements[ei++] = (r)*numColumns+c;
-            skirtDrawElements[ei++] = vi;
-            
-            // mark these points as protected to prevent them from being removed during simplification
-            pointsToProtectDuringSimplification.push_back((r)*numColumns+c);
-            pointsToProtectDuringSimplification.push_back(vi);
-
-            osg::Vec3 localSkirtVector = !mapLatLongsToXYZ ? 
-                                            skirtVector :
-                                            computeLocalSkirtVector(et, grid.get(), c, r, skirtLength, useLocalToTileTransform, _localToWorld);
-            
-            // add in the new point on the bottom of the skirt
-            v[vi] = v[(r)*numColumns+c]+localSkirtVector;
-            if (n.valid()) (*n)[vi] = (*n)[(r)*numColumns+c];
-            t[vi++] = t[(r)*numColumns+c];
-        }
-        // create left skirt vertices
-        c=0;
-        for(r=numRows-1;r>0;--r)
-        {
-            // assign indices to primitive set
-            skirtDrawElements[ei++] = (r)*numColumns+c;
-            skirtDrawElements[ei++] = vi;
-            
-            // mark these points as protected to prevent them from being removed during simplification
-            pointsToProtectDuringSimplification.push_back((r)*numColumns+c);
-            pointsToProtectDuringSimplification.push_back(vi);
-
-            osg::Vec3 localSkirtVector = !mapLatLongsToXYZ ? 
-                                            skirtVector :
-                                            computeLocalSkirtVector(et, grid.get(), c, r, skirtLength, useLocalToTileTransform, _localToWorld);
-            
-            // add in the new point on the bottom of the skirt
-            v[vi] = v[(r)*numColumns+c]+localSkirtVector;
-            if (n.valid()) (*n)[vi] = (*n)[(r)*numColumns+c];
-            t[vi++] = t[(r)*numColumns+c];
-        }
-        skirtDrawElements[ei++] = 0;
-        skirtDrawElements[ei++] = firstSkirtVertexIndex;
-    }
-
-    if (n.valid())
-    {
-        geometry->setNormalArray(n.get());
-        geometry->setNormalBinding(osg::Geometry::BIND_PER_VERTEX);
-    }
-
 
     osg::StateSet* stateset = createStateSet();
     if (!stateset && _defaultTexture.valid()) {
@@ -2533,20 +2528,18 @@ osg::Node* DestinationTile::createPolygonal()
         osgDB::writeNodeFile(*geode,"NodeBeforeSimplification.osg");
     }
 
-    if (_dataSet->getSimplifyTerrain())
+    if (_dataSet->getSimplifyTerrain() && maximumError > 0.0)
     {
-        unsigned int targetMaxNumVertices = 512;
-        double sample_ratio = (numVertices <= targetMaxNumVertices) ? 1.0 : (double)targetMaxNumVertices/(double)numVertices;
-        double radius = double(geometry->getBound().radius());
-        double maximumError = radius / 2000.0;
-    
-        osgUtil::Simplifier simplifier(sample_ratio,maximumError);
-
+        // Set low sample ratio to let maximum error rule (we have already adjusted mesh density)
+        osgUtil::Simplifier simplifier(0.000001, maximumError);
         simplifier.setDoTriStrip(false);
         simplifier.setSmoothing(false);
-    
-        simplifier.simplify(*geometry, pointsToProtectDuringSimplification);  // this will replace the normal vector with a new one
+        simplifier.simplify(*geometry);  // this will replace the normal vector with a new one
     }
+
+    // Create curtains after simplification
+    CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength);
+    geometry->accept(createCurtainsVisitor);
 
     if (useLocalToTileTransform)
     {
@@ -2884,9 +2877,49 @@ void CompositeDestination::equalizeBoundaries()
     {
         (*citr)->equalizeBoundaries();
     }
-
 }
 
+bool CompositeDestination::anyNonFlat()
+{
+    // handle leaves
+    for (TileList::iterator titr = _tiles.begin();
+      titr != _tiles.end();
+      ++titr)
+    {
+      if (!(*titr)->_flat)
+        return true;
+    }
+
+    // handle chilren
+    for (ChildList::iterator citr = _children.begin();
+      citr != _children.end();
+      ++citr)
+    {
+      if ((*citr)->anyNonFlat())
+        return true;
+    }
+
+    return false;
+}
+
+void CompositeDestination::setAllFlat()
+{
+  // handle leaves
+  for (TileList::iterator titr = _tiles.begin();
+    titr != _tiles.end();
+    ++titr)
+  {
+    (*titr)->optimizeResolution(true);
+  }
+
+  // handle chilren
+  for (ChildList::iterator citr = _children.begin();
+    citr != _children.end();
+    ++citr)
+  {
+    (*citr)->setAllFlat();
+  }
+}
 
 class CollectClusterCullingCallbacks : public osg::NodeVisitor
 {

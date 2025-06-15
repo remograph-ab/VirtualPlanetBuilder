@@ -63,6 +63,11 @@ void DataSet::init()
     _C1 = 0;
     _R1 = 0;
 
+    _flatNumCols = 0;
+    _flatNumRows = 0;
+
+    _maximumError = 0.0;
+
     _numTextureLevels = 1;
 
     _modelPlacer = new ObjectPlacer;
@@ -70,6 +75,11 @@ void DataSet::init()
 
     _newDestinationGraph = false;
 
+}
+
+void DataSet::setMaximumError(const double &maximumError)
+{
+  _maximumError = maximumError;
 }
 
 void DataSet::addSource(Source* source, unsigned int revisionNumber)
@@ -1354,6 +1364,11 @@ void DataSet::populateDestinationGraphFromSources()
 
         // for each DestinationTile populate it.
         _destinationGraph->readFrom(_sourceGraph.get());
+
+        // REMOGRAPH: If all were flat (but using full resolution to avoid internal t-vertices), revert back to simple 8x8
+        if (!_destinationGraph->anyNonFlat()) {
+          _destinationGraph->setAllFlat();
+        }
 
         // for each DestinationTile equalize the boundaries so they all fit each other without gaps.
         _destinationGraph->equalizeBoundaries();

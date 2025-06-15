@@ -1,0 +1,24 @@
+#ifndef RAMER_DOUGLAS_PEUCKER_H
+#define RAMER_DOUGLAS_PEUCKER_H
+
+#include <vector>
+
+#include <osg/Shape>
+
+class RamerDouglasPeucker
+{
+public:
+  static void simplifyBorderVertices(
+    osg::HeightField *grid, const unsigned int &numColumns, const unsigned int &numRows,
+    std::vector<unsigned int> &simplifiedBottomColumns, std::vector<unsigned int> &simplifiedRightRows,
+    std::vector<unsigned int> &simplifiedTopRows, std::vector<unsigned int> &simplifiedLeftRows,
+    const float &maximumError
+  );
+
+private:
+  static void simplifyHeights(const std::vector<float>& heights, const float& delta, const float& maxDiff, std::vector<unsigned int> &decimatedIndices);
+  static void rdpRecursive(const std::vector<float>& heights, const float &delta, const float &maxDiff, const unsigned int &startIdx, const unsigned int &endIdx, std::vector<unsigned int> &outIndices);
+  static float perpendicularDistance(const unsigned int &index, const unsigned int &startIdx, const unsigned int &endIdx, const float &height, const float &startHeight, const float &endHeight, const float &delta);
+};
+
+#endif // RAMER_DOUGLAS_PEUCKER_H

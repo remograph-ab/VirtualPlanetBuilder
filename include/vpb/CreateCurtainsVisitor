@@ -1,0 +1,19 @@
+#pragma once
+
+#include <vector>
+
+#include <osg/BoundingBox>
+#include <osg/NodeVisitor>
+#include <osg/Geometry>
+
+
+class CreateCurtainsVisitor : public osg::NodeVisitor
+{
+public:
+  CreateCurtainsVisitor(const osg::BoundingBox &bbox, const float &curtainHeight);
+  void apply(osg::Geometry &geometry);
+
+private:
+  osg::BoundingBox _bbox;
+  float _curtainHeight;
+};

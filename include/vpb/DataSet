@@ -103,6 +103,8 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
 
         CompositeSource* getSourceGraph() { return _sourceGraph.get(); }
 
+        void setMaximumError(const double &maximumError);
+        double getMaximumError() const { return _maximumError; }
 
         void addSource(Source* source, unsigned int revisionNumber);
         // void addSource(CompositeSource* composite);
@@ -273,6 +275,11 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         std::string                                 _taskOutputDirectory;
 
         osg::ref_ptr<osgDB::DatabaseRevision>       _databaseRevision;
+
+        unsigned int _flatNumCols;
+        unsigned int _flatNumRows;
+
+        double _maximumError;
 };
 
 }

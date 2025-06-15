@@ -155,7 +155,7 @@ public:
     void setTileComplete(bool complete);
     bool getTileComplete() const { return _complete; }
 
-    void optimizeResolution();
+    void optimizeResolution(const bool &forceLowres = false);
 
     osg::HeightField* getSourceHeightField() { return _terrain->_heightField.get(); }
 
@@ -275,6 +275,7 @@ public:
     typedef std::list< osg::ref_ptr<Source> >   Sources;
     Sources                                     _sources;
     
+    bool _flat;
 };
 
 class VPB_EXPORT CompositeDestination : public osg::Referenced, public SpatialProperties
@@ -318,6 +319,10 @@ public:
 
     void equalizeBoundaries();
 
+    bool anyNonFlat();
+
+    void setAllFlat();
+
     osg::Node* createScene();
 
     bool areSubTilesComplete();
@@ -353,7 +358,7 @@ public:
     ChildList               _children;
     float                   _maxVisibleDistance;
     bool                    _subTileGenerated;
-
+    bool                    _flat;
 };
 
 

@@ -52,3 +52,4 @@ install_manifest.txt
 *.tlog
 *.pdb
 *.bak
+/src/vpb/vpb.dir/Release/*.log

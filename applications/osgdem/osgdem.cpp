@@ -40,6 +40,8 @@ int main(int argc, char** argv)
 
     commandline.getUsage(*arguments.getApplicationUsage());
 
+    double maximumError = 0.0;
+    arguments.read("--maximum-error", maximumError);
 
     if (arguments.read("--version"))
     {
@@ -265,6 +267,8 @@ int main(int argc, char** argv)
 
             }
             osg::ref_ptr<vpb::DataSet> dataset = new vpb::DataSet;
+
+            dataset->setMaximumError(maximumError);
 
             if (bo && !(bo->getLogFileName().empty()))
             {
