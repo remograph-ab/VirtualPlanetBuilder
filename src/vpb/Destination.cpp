@@ -2122,7 +2122,7 @@ osg::Node* DestinationTile::createPolygonal()
         skirtVector.set(0.0f,0.0f,-skirtLength);
     }
     
-    double maximumError = _dataSet->getMaximumError();
+    double maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
 
     // Simplify border vertices
     std::vector<unsigned int> simplifiedBottomColumns;
