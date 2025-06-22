@@ -14,6 +14,7 @@ struct FindEdgesFunctor
 {
   FindEdgesFunctor()
   : vertices(NULL)
+  , normals(NULL)
   , primitives(new osg::DrawElementsUShort(osg::PrimitiveSet::QUADS))
   , curtainHeight(1.0f)
   {
@@ -40,8 +41,10 @@ struct FindEdgesFunctor
 
       primitives->addElement(vertices->size());
       vertices->push_back(osg::Vec3(v1.x(), v1.y(), v1.z() - curtainHeight));
+      normals->push_back((*normals)[p1]);
 
       primitives->addElement(vertices->size());
+      normals->push_back((*normals)[p2]);
       vertices->push_back(osg::Vec3(v2.x(), v2.y(), v2.z() - curtainHeight));
     }
   }
@@ -59,6 +62,7 @@ struct FindEdgesFunctor
 
   osg::BoundingBox bbox;
   osg::Vec3Array *vertices;
+  osg::Vec3Array *normals;
   osg::DrawElementsUShort *primitives;
   float curtainHeight;
 };
@@ -76,10 +80,15 @@ void CreateCurtainsVisitor::apply(osg::Geometry &geometry)
   if (!vertices)
     return;
 
+  osg::Vec3Array *normals = dynamic_cast<osg::Vec3Array *>(geometry.getNormalArray());
+  if (!normals)
+    return;
+
   osg::TriangleIndexFunctor<FindEdgesFunctor> findEdgesFunctor;
   findEdgesFunctor.setBbox(_bbox);
   findEdgesFunctor.setCurtainHeight(_curtainHeight);
   findEdgesFunctor.vertices = vertices;
+  findEdgesFunctor.normals = normals;
   geometry.accept(findEdgesFunctor);
 
   if (findEdgesFunctor.primitives->getNumIndices() > 0)

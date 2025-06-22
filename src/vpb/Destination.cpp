@@ -2362,6 +2362,9 @@ osg::Node* DestinationTile::createPolygonal()
     osgUtil::SmoothingVisitor sv;
     sv.smooth(*geometry);
 
+    // Protect border points
+    osgUtil::Simplifier::IndexList pointsToProtectDuringSimplification;
+
     // Apply tile border normals computed through equalization
     osg::ref_ptr<osg::Vec3Array> n = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
     osg::BoundingBox bbox = geometry->getBoundingBox();
@@ -2433,6 +2436,7 @@ osg::Node* DestinationTile::createPolygonal()
             continue;
         }
 
+        pointsToProtectDuringSimplification.push_back(vi);
         osg::Vec3& normal = (*n)[vi];
         osg::Vec2 heightDelta = _heightDeltas[position][heightDeltaIndex];
 
@@ -2499,7 +2503,7 @@ osg::Node* DestinationTile::createPolygonal()
                  max_cluster_culling_radius);
         geometry->setCullCallback(ccc);
     }
-
+    
     osg::StateSet* stateset = createStateSet();
     if (!stateset && _defaultTexture.valid()) {
       // Completely non-filled but we have default image, repeat it correctly
@@ -2534,7 +2538,7 @@ osg::Node* DestinationTile::createPolygonal()
         osgUtil::Simplifier simplifier(0.000001, maximumError);
         simplifier.setDoTriStrip(false);
         simplifier.setSmoothing(false);
-        simplifier.simplify(*geometry);  // this will replace the normal vector with a new one
+        simplifier.simplify(*geometry, pointsToProtectDuringSimplification);  // this will replace the normal vector with a new one
     }
 
     // Create curtains after simplification
