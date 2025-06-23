@@ -2042,7 +2042,7 @@ osg::Node* DestinationTile::createPolygonal()
     osg::Geometry* geometry = new osg::Geometry;
     
     osg::Vec3Array& v = *(new osg::Vec3Array(numVertices));
-    osg::Vec2Array& t = *(new osg::Vec2Array(numVertices));
+    //osg::Vec2Array& t = *(new osg::Vec2Array(numVertices));
     osg::Vec4ubArray& color = *(new osg::Vec4ubArray(1));
 
     color[0].set(255,255,255,255);
@@ -2247,8 +2247,8 @@ osg::Node* DestinationTile::createPolygonal()
                 }
             }
 
-            t[vi].x() = (c==numColumns-1)? 1.0f : (float)(c)/(float)(numColumns-1);
-            t[vi].y() = (r==numRows-1)? 1.0f : (float)(r)/(float)(numRows-1);
+            //t[vi].x() = (c==numColumns-1)? 1.0f : (float)(c)/(float)(numColumns-1);
+            //t[vi].y() = (r==numRows-1)? 1.0f : (float)(r)/(float)(numRows-1);
 
             ++vi;
             
@@ -2259,7 +2259,7 @@ osg::Node* DestinationTile::createPolygonal()
     if (vi < numVertices) {
       numVertices = vi;
       (&v)->resize(numVertices);
-      (&t)->resize(numVertices);
+      //(&t)->resize(numVertices);
     }
 
     //geometry->setUseDisplayList(false);
@@ -2267,6 +2267,7 @@ osg::Node* DestinationTile::createPolygonal()
     geometry->setColorArray(&color);
     geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
 
+    /*
     bool fillInAllTextureUnits = true;
     if (fillInAllTextureUnits)
     {
@@ -2293,12 +2294,32 @@ osg::Node* DestinationTile::createPolygonal()
             }
         }
     }
+    */
+
+    osg::StateSet* stateset = createStateSet();
+    if (!stateset && _defaultTexture.valid()) {
+      // Completely non-filled but we have default image, repeat it correctly
+      stateset = createDefaultGeometryAndStateSet(geometry);
+    }
+
+    if (stateset)
+    {
+        geometry->setStateSet(stateset);
+    }
+    else {
+        osg::Vec4Array* colours = new osg::Vec4Array(1);
+        (*colours)[0] = _dataSet->getDefaultColor();
+
+        geometry->setColorArray(colours);
+        geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
+    }
 
     // Delaunay-triangulate tile
+    /*
     std::map<osg::Vec3, unsigned int> normalIndexMap;
     for (unsigned int i = 0; i < v.size(); ++i)
         normalIndexMap[v[i]] = i;
-
+    */
     osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(&v);
 
     // Add Delaunay constraints for borders
@@ -2365,17 +2386,20 @@ osg::Node* DestinationTile::createPolygonal()
     // Protect border points
     osgUtil::Simplifier::IndexList pointsToProtectDuringSimplification;
 
-    // Apply tile border normals computed through equalization
+    // Apply tile border normals computed through equalization and map texture
+    osg::ref_ptr<osg::Vec2Array> t = new osg::Vec2Array();
+    geometry->setTexCoordArray(0, t);
     osg::ref_ptr<osg::Vec3Array> n = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
     osg::BoundingBox bbox = geometry->getBoundingBox();
+    float bboxWidth = bbox.xMax() - bbox.xMin();
+    float bboxHeight = bbox.yMax() - bbox.yMin();
     unsigned int i = 0;
     unsigned int j = 0;
     unsigned int heightDeltaIndex = 0;
     for (unsigned int vi = 0; vi < v.size(); ++vi) {
         osg::Vec3 pos = v[vi];
+        t->push_back(osg::Vec2((pos.x() - bbox.xMin()) / bboxWidth, (pos.y() - bbox.yMin()) / bboxHeight));
         unsigned int position = NUMBER_OF_POSITIONS;
-        unsigned int i = 0;
-        
         if (pos.x() == bbox.xMin()) {
             i = 0;
             if (pos.y() == bbox.yMin()) {
@@ -2503,26 +2527,6 @@ osg::Node* DestinationTile::createPolygonal()
                  max_cluster_culling_radius);
         geometry->setCullCallback(ccc);
     }
-    
-    osg::StateSet* stateset = createStateSet();
-    if (!stateset && _defaultTexture.valid()) {
-      // Completely non-filled but we have default image, repeat it correctly
-      stateset = createDefaultGeometryAndStateSet(geometry);
-    }
-
-    if (stateset)
-    {
-        geometry->setStateSet(stateset);
-    }
-    else
-    {
-        osg::Vec4Array* colours = new osg::Vec4Array(1);
-        (*colours)[0] = _dataSet->getDefaultColor();
-
-        geometry->setColorArray(colours);
-        geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
-    }
-    
     
     osg::Geode* geode = new osg::Geode;
     geode->addDrawable(geometry);

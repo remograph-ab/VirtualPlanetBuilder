@@ -15,7 +15,7 @@ struct FindEdgesFunctor
   FindEdgesFunctor()
   : vertices(NULL)
   , normals(NULL)
-  , primitives(new osg::DrawElementsUShort(osg::PrimitiveSet::QUADS))
+  , primitives(new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLES))
   , curtainHeight(1.0f)
   {
   }
@@ -39,11 +39,16 @@ struct FindEdgesFunctor
       primitives->addElement(p2);
       primitives->addElement(p1);
 
-      primitives->addElement(vertices->size());
+      unsigned int lower1 = vertices->size();
+      primitives->addElement(lower1);
       vertices->push_back(osg::Vec3(v1.x(), v1.y(), v1.z() - curtainHeight));
       normals->push_back((*normals)[p1]);
 
-      primitives->addElement(vertices->size());
+      primitives->addElement(p2);
+      primitives->addElement(lower1);
+
+      unsigned int lower2 = vertices->size();
+      primitives->addElement(lower2);
       normals->push_back((*normals)[p2]);
       vertices->push_back(osg::Vec3(v2.x(), v2.y(), v2.z() - curtainHeight));
     }
