@@ -27,19 +27,130 @@
 #include <osg/PagedLOD>
 #include <osg/io_utils>
 #include <osg/GLU>
+#include <osg/TriangleIndexFunctor>
 
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
 #include <osgDB/FileNameUtils>
 
 #include <osgUtil/SmoothingVisitor>
-#include <osgUtil/Simplifier>
 #include <osgUtil/DelaunayTriangulator>
 
 using namespace vpb;
 
 
 #define SHIFT_RASTER_BY_HALF_CELL
+
+
+struct FindWorstPointFunctor
+{
+    FindWorstPointFunctor()
+        : vertices(NULL)
+        , heightField(NULL)
+        , heightFieldNumCols(0)
+        , heightFieldNumRows(0)
+        , worstPointFound(false)
+        , maxError(0.0f)
+        , error(0.0f)
+    {
+    }
+
+    float sign(const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
+    {
+        return (v1.x() - v3.x()) * (v2.y() - v3.y()) - (v2.x() - v3.x()) * (v1.y() - v3.y());
+    }
+
+    bool withinTriangle(const osg::Vec3 &p, const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
+    {
+        float d1 = sign(p, v1, v2);
+        float d2 = sign(p, v2, v3);
+        float d3 = sign(p, v3, v1);
+
+        bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+        bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+        return !(hasNeg && hasPos);
+    }
+
+    bool vertexAdded(const osg::Vec3 &pos)
+    {
+        for (osg::Vec3Array::iterator it = vertices->begin(); it != vertices->end(); ++it) {
+            if (fabsf(pos.x() - it->x()) < tolerance && fabsf(pos.y() - it->y()) < tolerance)
+                return true;
+        }
+        return false;
+    }
+
+    inline void operator() (unsigned int p1, unsigned int p2, unsigned int p3)
+    {
+        osg::Vec3 v1 = (*vertices)[p1];
+        osg::Vec3 v2 = (*vertices)[p2];
+        osg::Vec3 v3 = (*vertices)[p3];
+
+        osg::BoundingBox bbox;
+        bbox.expandBy(v1);
+        bbox.expandBy(v2);
+        bbox.expandBy(v3);
+        bbox._min.set(osg::Vec3(std::max<float>(bbox.xMin(), heightFieldBbox.xMin()), std::max<float>(bbox.yMin(), heightFieldBbox.yMin()), 0.0f));
+        bbox._max.set(osg::Vec3(std::min<float>(bbox.xMax(), heightFieldBbox.xMax()), std::min<float>(bbox.yMax(), heightFieldBbox.yMax()), 0.0f));
+
+        unsigned int llCol = static_cast<unsigned int>(std::max<float>(floorf((bbox.xMin() - heightFieldBbox.xMin()) / heightFieldInterval.x()), 0.0f));
+        unsigned int llRow = static_cast<unsigned int>(std::max<float>(floorf((bbox.yMin() - heightFieldBbox.yMin()) / heightFieldInterval.y()), 0.0f));
+        unsigned int urCol = static_cast<unsigned int>(std::min<float>(ceilf((bbox.xMax() - heightFieldBbox.xMin()) / heightFieldInterval.x()), heightFieldNumCols - 1.0f));
+        unsigned int urRow = static_cast<unsigned int>(std::min<float>(ceilf((bbox.yMax() - heightFieldBbox.yMin()) / heightFieldInterval.y()), heightFieldNumRows - 1.0f));
+
+        // Traverse triangle bbox in height field
+        for (unsigned int r = llRow; r <= urRow; ++r) {
+            for (unsigned int c = llCol; c <= urCol; ++c) {
+                osg::Vec3 pos(
+                    heightFieldBbox.xMin() + heightFieldInterval.x() * (c + 0.5f),
+                    heightFieldBbox.yMin() + heightFieldInterval.y() * (r + 0.5f),
+                    0.0f
+                );
+
+                if (pos.x() == v1.x() && pos.y() == v1.y())
+                    continue;
+                if (pos.x() == v2.x() && pos.y() == v2.y())
+                    continue;
+                if (pos.x() == v3.x() && pos.y() == v3.y())
+                    continue;
+
+                // Within triangle?
+                if (!withinTriangle(pos, v1, v2, v3))
+                    continue;
+
+                // Interpolate Z 
+                float detT = (v2.y() - v3.y()) * (v1.x() - v3.x()) + (v3.x() - v2.x()) * (v1.y() - v3.y());
+                float lambda1 = ((v2.y() - v3.y()) * (pos.x() - v3.x()) + (v3.x() - v2.x()) * (pos.y() - v3.y())) / detT;
+                float lambda2 = ((v3.y() - v1.y()) * (pos.x() - v3.x()) + (v1.x() - v3.x()) * (pos.y() - v3.y())) / detT;
+                float lambda3 = 1.0f - lambda1 - lambda2;
+                float z = lambda1 * v1.z() + lambda2 * v2.z() + lambda3 * v3.z();
+
+                // Measure error
+                float height = heightField->getHeight(c, r);
+                float diff = fabsf(z - height);
+                if (diff > maxError && diff > error && !vertexAdded(pos)) {
+                    error = diff;
+                    worstPoint.set(pos.x(), pos.y(), height);
+                    worstPointFound = true;
+                }
+            }
+        }
+    }
+
+    osg::Vec3Array *vertices;
+    osg::HeightField *heightField;
+    osg::BoundingBox heightFieldBbox;
+    osg::Vec2 heightFieldInterval;
+    unsigned int heightFieldNumCols;
+    unsigned int heightFieldNumRows;
+    osg::Vec3 worstPoint;
+    bool worstPointFound;
+    float maxError;
+    float error;
+    float tolerance;
+};
+
 
 /////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -1593,10 +1704,6 @@ osg::Node* DestinationTile::createHeightField()
     {
         shapeDrawable->setStateSet(stateset);
     }
-    else
-    {
-        shapeDrawable->setColor(_dataSet->getDefaultColor());
-    }
     
     osg::Geode* geode = new osg::Geode;
     geode->addDrawable(shapeDrawable);
@@ -1947,6 +2054,11 @@ static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, double X
                      X*worldToLocal(0,2) + Y*worldToLocal(1,2) + Z*worldToLocal(2,2) + worldToLocal(3,2));
 }
 
+static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, const osg::Vec3d &pos)
+{
+    return computeLocalPosition(worldToLocal, pos.x(), pos.y(), pos.z());
+}
+
 static inline osg::Vec3 computeLocalSkirtVector(const osg::EllipsoidModel* et, const osg::HeightField* grid, unsigned int i, unsigned int j, float length, bool useLocalToTileTransform, const osg::Matrixd& localToWorld)
 {
     // no local to tile transform + mapping from lat+longs to XYZ so we need to use
@@ -2042,10 +2154,6 @@ osg::Node* DestinationTile::createPolygonal()
     osg::Geometry* geometry = new osg::Geometry;
     
     osg::Vec3Array& v = *(new osg::Vec3Array(numVertices));
-    //osg::Vec2Array& t = *(new osg::Vec2Array(numVertices));
-    osg::Vec4ubArray& color = *(new osg::Vec4ubArray(1));
-
-    color[0].set(255,255,255,255);
 
     _localToWorld.makeIdentity();
     _worldToLocal.makeIdentity();
@@ -2134,7 +2242,7 @@ osg::Node* DestinationTile::createPolygonal()
             grid, numColumns, numRows,
             simplifiedBottomColumns, simplifiedRightRows,
             simplifiedTopRows, simplifiedLeftRows,
-            static_cast<float>(maximumError)
+            static_cast<float>(maximumError / 2.0)
         );
     }
 
@@ -2186,16 +2294,9 @@ osg::Node* DestinationTile::createPolygonal()
                                              X,Y,Z);
             }
 
-            osg::Vec3 pos;
-
+            osg::Vec3d pos(X, Y, Z);
             if (useLocalToTileTransform)
-            {
-                pos = computeLocalPosition(_worldToLocal,X,Y,Z);
-            }
-            else
-            {
-                pos.set(X,Y,Z);
-            }
+                pos = computeLocalPosition(_worldToLocal, pos);
 
             // Collect border vertices to use as Delaunay constraints
             bool isBorder = false;
@@ -2263,9 +2364,7 @@ osg::Node* DestinationTile::createPolygonal()
     }
 
     //geometry->setUseDisplayList(false);
-    geometry->setVertexArray(&v);
-    geometry->setColorArray(&color);
-    geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
+
 
     /*
     bool fillInAllTextureUnits = true;
@@ -2306,23 +2405,8 @@ osg::Node* DestinationTile::createPolygonal()
     {
         geometry->setStateSet(stateset);
     }
-    else {
-        osg::Vec4Array* colours = new osg::Vec4Array(1);
-        (*colours)[0] = _dataSet->getDefaultColor();
 
-        geometry->setColorArray(colours);
-        geometry->setColorBinding(osg::Geometry::BIND_OVERALL);
-    }
-
-    // Delaunay-triangulate tile
-    /*
-    std::map<osg::Vec3, unsigned int> normalIndexMap;
-    for (unsigned int i = 0; i < v.size(); ++i)
-        normalIndexMap[v[i]] = i;
-    */
-    osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(&v);
-
-    // Add Delaunay constraints for borders
+    // Create Delaunay constraints for borders
     osg::ref_ptr<osgUtil::DelaunayConstraint> delaunayConstraint = new osgUtil::DelaunayConstraint();
     osg::ref_ptr<osg::Vec3Array> borderVertices = new osg::Vec3Array();
     borderVertices->insert(borderVertices->end(), bottomBorderVertices->begin(), bottomBorderVertices->end());
@@ -2331,14 +2415,79 @@ osg::Node* DestinationTile::createPolygonal()
     borderVertices->insert(borderVertices->end(), leftBorderVertices->begin(), leftBorderVertices->end());
     delaunayConstraint->setVertexArray(borderVertices);
     delaunayConstraint->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINE_STRIP, 0, borderVertices->size()));
-    delaunayTriangulator->addInputConstraint(delaunayConstraint);
 
-    if (delaunayTriangulator->triangulate()) {
+    // Add center point since DelaunayTriangulator doesn't accept border constraints only
+    osg::ref_ptr<osg::Vec3Array> dv = new osg::Vec3Array();
+    unsigned int centerCol = static_cast<unsigned int>(grid->getNumColumns() / 2.0f + 0.5f);
+    unsigned int centerRow = static_cast<unsigned int>(grid->getNumRows() / 2.0f + 0.5f);
+    osg::Vec3d centerPoint(
+        orig_X + delta_X * (double)centerCol,
+        orig_Y + delta_Y * (double)centerRow,
+        orig_Z + grid->getHeight(centerCol, centerRow)
+    );
+    if (useLocalToTileTransform)
+        centerPoint = computeLocalPosition(_worldToLocal, centerPoint);
+
+    dv->push_back(centerPoint);
+
+    // Delaunay-triangulate tile with only borders and center point first, and add points until max error is fulfilled
+    double currentError = FLT_MAX;
+    bool delaunayFailed = false;
+    while (currentError > maximumError) {
+        osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(dv);
+        delaunayTriangulator->addInputConstraint(delaunayConstraint);
+        if (!delaunayTriangulator->triangulate()) {
+            delaunayFailed = true;
+            break;
+        }
+        geometry->setVertexArray(dv);
+        unsigned int numPrims = geometry->getNumPrimitiveSets();
+        if (numPrims > 0)
+            geometry->removePrimitiveSet(0, numPrims);
         geometry->addPrimitiveSet(delaunayTriangulator->getTriangles());
+
+        // Find most differing point
+        osg::TriangleIndexFunctor<FindWorstPointFunctor> findWorstPointFunctor;
+        findWorstPointFunctor.vertices = dv;
+        findWorstPointFunctor.heightField = grid;
+        findWorstPointFunctor.heightFieldBbox.set(
+            grid->getOrigin(),
+            grid->getOrigin() + osg::Vec3(
+                grid->getXInterval() * grid->getNumColumns(),
+                grid->getYInterval() * grid->getNumRows(),
+                0.0f
+            )
+        );
+        if (useLocalToTileTransform) {
+            findWorstPointFunctor.heightFieldBbox._min = computeLocalPosition(_worldToLocal, findWorstPointFunctor.heightFieldBbox._min);
+            findWorstPointFunctor.heightFieldBbox._max = computeLocalPosition(_worldToLocal, findWorstPointFunctor.heightFieldBbox._max);
+        }
+        findWorstPointFunctor.heightFieldInterval.set(grid->getXInterval(), grid->getYInterval());
+        findWorstPointFunctor.heightFieldNumCols = grid->getNumColumns();
+        findWorstPointFunctor.heightFieldNumRows = grid->getNumRows();
+        findWorstPointFunctor.maxError = maximumError;
+        findWorstPointFunctor.tolerance = (grid->getXInterval() + grid->getYInterval()) / 20.0;
+        geometry->accept(findWorstPointFunctor);
+        if (findWorstPointFunctor.error > maximumError && findWorstPointFunctor.worstPointFound) {
+            dv->push_back(findWorstPointFunctor.worstPoint);
+
+            // Remove border vertices from list again (added by DelaunayTriangulator and would cause duplicates)
+            for (osg::Vec3Array::iterator borderIt = borderVertices->begin(); borderIt != borderVertices->end(); ++borderIt) {
+                osg::Vec3Array::iterator dvIt = std::find(dv->begin(), dv->end(), *borderIt);
+                if (dvIt != dv->end())
+                    dv->erase(dvIt);
+            }
+
+            currentError = findWorstPointFunctor.error;
+        }
+        else {
+            break;
+        }
     }
-    else {
+
+    if (delaunayFailed) {
         // Failed delaunay, fallback to regular mesh
-        std::cerr << std::endl << "ERROR: Failed performing Delaunay triangulation, fallback to regular simplified mesh" << std::endl;
+        std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular simplified mesh" << std::endl;
         osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
         geometry->addPrimitiveSet(&drawElements);
         int ei=0;
@@ -2383,9 +2532,6 @@ osg::Node* DestinationTile::createPolygonal()
     osgUtil::SmoothingVisitor sv;
     sv.smooth(*geometry);
 
-    // Protect border points
-    osgUtil::Simplifier::IndexList pointsToProtectDuringSimplification;
-
     // Apply tile border normals computed through equalization and map texture
     osg::ref_ptr<osg::Vec2Array> t = new osg::Vec2Array();
     geometry->setTexCoordArray(0, t);
@@ -2396,8 +2542,8 @@ osg::Node* DestinationTile::createPolygonal()
     unsigned int i = 0;
     unsigned int j = 0;
     unsigned int heightDeltaIndex = 0;
-    for (unsigned int vi = 0; vi < v.size(); ++vi) {
-        osg::Vec3 pos = v[vi];
+    for (unsigned int vi = 0; vi < dv->size(); ++vi) {
+        osg::Vec3 pos = (*dv)[vi];
         t->push_back(osg::Vec2((pos.x() - bbox.xMin()) / bboxWidth, (pos.y() - bbox.yMin()) / bboxHeight));
         unsigned int position = NUMBER_OF_POSITIONS;
         if (pos.x() == bbox.xMin()) {
@@ -2460,7 +2606,6 @@ osg::Node* DestinationTile::createPolygonal()
             continue;
         }
 
-        pointsToProtectDuringSimplification.push_back(vi);
         osg::Vec3& normal = (*n)[vi];
         osg::Vec2 heightDelta = _heightDeltas[position][heightDeltaIndex];
 
@@ -2534,15 +2679,6 @@ osg::Node* DestinationTile::createPolygonal()
     if (_dataSet->getWriteNodeBeforeSimplification())
     {
         osgDB::writeNodeFile(*geode,"NodeBeforeSimplification.osg");
-    }
-
-    if (_dataSet->getSimplifyTerrain() && maximumError > 0.0)
-    {
-        // Set low sample ratio to let maximum error rule (we have already adjusted mesh density)
-        osgUtil::Simplifier simplifier(0.000001, maximumError);
-        simplifier.setDoTriStrip(false);
-        simplifier.setSmoothing(false);
-        simplifier.simplify(*geometry, pointsToProtectDuringSimplification);  // this will replace the normal vector with a new one
     }
 
     // Create curtains after simplification
