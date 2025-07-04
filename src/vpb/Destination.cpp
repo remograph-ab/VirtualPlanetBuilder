@@ -42,6 +42,43 @@ using namespace vpb;
 #define SHIFT_RASTER_BY_HALF_CELL
 
 
+// 7x7 mediam height field delta calculation
+osg::Vec2 getSmoothHeightDelta(osg::HeightField *hf, const unsigned int &c, const unsigned int &r)
+{
+    unsigned int numCols = hf->getNumColumns();
+    unsigned int numRows = hf->getNumRows();
+
+    std::vector<float> xvec, yvec;
+    unsigned int fromCol = static_cast<unsigned int>(std::max<int>(c - 3, 0));
+    unsigned int toCol = std::min<unsigned int>(c + 3, numCols - 1);
+    unsigned int fromRow = static_cast<unsigned int>(std::max<int>(r - 3, 0));
+    unsigned int toRow = std::min<unsigned int>(r + 3, numRows - 1);
+    for (unsigned int j = fromRow; j <= toRow; ++j) {
+        for (unsigned int i = fromCol; i <= toCol; ++i) {
+            osg::Vec2 heightDelta = hf->getHeightDelta(i, j);
+            xvec.push_back(heightDelta.x());
+            yvec.push_back(heightDelta.y());
+        }
+    }
+
+    std::sort(xvec.begin(), xvec.end());
+    std::sort(yvec.begin(), yvec.end());
+
+    if (xvec.size() % 2 == 0) {
+        return osg::Vec2(
+            0.5f * (xvec[xvec.size() / 2 - 1] + xvec[xvec.size() / 2]),
+            0.5f * (yvec[yvec.size() / 2 - 1] + yvec[yvec.size() / 2])
+        );
+    }
+    else {
+        return osg::Vec2(
+            xvec[xvec.size() / 2],
+            yvec[yvec.size() / 2]
+        );
+    }
+}
+
+
 struct FindWorstPointFunctor
 {
     FindWorstPointFunctor()
@@ -880,19 +917,23 @@ void DestinationTile::equalizeCorner(Position position)
             {
             case LEFT_BELOW:
                 height += hfcp.first->getHeight(0,0);
-                heightDelta += hfcp.first->getHeightDelta(0,0);
+                //heightDelta += hfcp.first->getHeightDelta(0,0);
+                heightDelta += getSmoothHeightDelta(hfcp.first, 0, 0);
                 break;
             case BELOW_RIGHT:
                 height += hfcp.first->getHeight(hfcp.first->getNumColumns()-1,0);
-                heightDelta += hfcp.first->getHeightDelta(hfcp.first->getNumColumns()-1,0);
+                //heightDelta += hfcp.first->getHeightDelta(hfcp.first->getNumColumns()-1,0);
+                heightDelta += getSmoothHeightDelta(hfcp.first, hfcp.first->getNumColumns() - 1, 0);
                 break;
             case RIGHT_ABOVE:
                 height += hfcp.first->getHeight(hfcp.first->getNumColumns()-1,hfcp.first->getNumRows()-1);
-                heightDelta += hfcp.first->getHeightDelta(hfcp.first->getNumColumns()-1,hfcp.first->getNumRows()-1);
+                //heightDelta += hfcp.first->getHeightDelta(hfcp.first->getNumColumns()-1,hfcp.first->getNumRows()-1);
+                heightDelta += getSmoothHeightDelta(hfcp.first, hfcp.first->getNumColumns() - 1, hfcp.first->getNumRows() - 1);
                 break;
             case ABOVE_LEFT:
                 height += hfcp.first->getHeight(0,hfcp.first->getNumRows()-1);
-                heightDelta += hfcp.first->getHeightDelta(0,hfcp.first->getNumRows()-1);
+                //heightDelta += hfcp.first->getHeightDelta(0,hfcp.first->getNumRows()-1);
+                heightDelta += getSmoothHeightDelta(hfcp.first, 0, hfcp.first->getNumRows() - 1);
                 break;
             default :
                 break;
@@ -1188,8 +1229,11 @@ void DestinationTile::equalizeEdge(Position position)
             data2 += delta2;
             
             // equailize normals
+            /*
             osg::Vec2 heightDelta = (heightField1->getHeightDelta(i1,j1) +
                                     heightField2->getHeightDelta(i2,j2))*0.5f;
+                                    */
+            osg::Vec2 heightDelta = (getSmoothHeightDelta(heightField1, i1, j1) + getSmoothHeightDelta(heightField2, i2, j2)) * 0.5f;
                                
             // pass the normals on to the tiles.
             _heightDeltas[position].push_back(heightDelta);
@@ -2360,40 +2404,7 @@ osg::Node* DestinationTile::createPolygonal()
     if (vi < numVertices) {
       numVertices = vi;
       (&v)->resize(numVertices);
-      //(&t)->resize(numVertices);
     }
-
-    //geometry->setUseDisplayList(false);
-
-
-    /*
-    bool fillInAllTextureUnits = true;
-    if (fillInAllTextureUnits)
-    {
-        for(unsigned int layerNum=0;
-            layerNum<_dataSet->getNumOfTextureLevels();
-            ++layerNum)
-        {
-            geometry->setTexCoordArray(layerNum,&t);
-        }
-    }
-    else
-    {
-        for(unsigned int layerNum=0;
-            layerNum<getNumLayers();
-            ++layerNum)
-        {
-            ImageSet& imageSet = getImageSet(layerNum);
-            if (imageSet._layerSetImageDataMap.empty()) continue;
-                        
-            ImageData& imageData = imageSet._layerSetImageDataMap.begin()->second;
-            if (imageData._imageDestination.valid() && imageData._imageDestination->_image.valid())
-            {
-                geometry->setTexCoordArray(layerNum,&t);
-            }
-        }
-    }
-    */
 
     osg::StateSet* stateset = createStateSet();
     if (!stateset && _defaultTexture.valid()) {
@@ -2487,7 +2498,7 @@ osg::Node* DestinationTile::createPolygonal()
 
     if (delaunayFailed) {
         // Failed delaunay, fallback to regular mesh
-        std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular simplified mesh" << std::endl;
+        std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular mesh" << std::endl;
         osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
         geometry->addPrimitiveSet(&drawElements);
         int ei=0;
@@ -2532,7 +2543,7 @@ osg::Node* DestinationTile::createPolygonal()
     osgUtil::SmoothingVisitor sv;
     sv.smooth(*geometry);
 
-    // Apply tile border normals computed through equalization and map texture
+    // Map texture and apply tile border normals computed through equalization
     osg::ref_ptr<osg::Vec2Array> t = new osg::Vec2Array();
     geometry->setTexCoordArray(0, t);
     osg::ref_ptr<osg::Vec3Array> n = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
@@ -2676,12 +2687,7 @@ osg::Node* DestinationTile::createPolygonal()
     osg::Geode* geode = new osg::Geode;
     geode->addDrawable(geometry);
 
-    if (_dataSet->getWriteNodeBeforeSimplification())
-    {
-        osgDB::writeNodeFile(*geode,"NodeBeforeSimplification.osg");
-    }
-
-    // Create curtains after simplification
+    // Create curtains
     CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength);
     geometry->accept(createCurtainsVisitor);
 
