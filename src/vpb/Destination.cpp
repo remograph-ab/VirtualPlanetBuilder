@@ -42,16 +42,15 @@ using namespace vpb;
 #define SHIFT_RASTER_BY_HALF_CELL
 
 
-struct FindWorstPointFunctor
+struct FindWorstPointsFunctor
 {
-    FindWorstPointFunctor()
+    FindWorstPointsFunctor()
         : vertices(NULL)
         , heightField(NULL)
         , heightFieldNumCols(0)
         , heightFieldNumRows(0)
-        , worstPointFound(false)
         , maxError(0.0f)
-        , error(0.0f)
+        , batchSize(1)
     {
     }
 
@@ -129,10 +128,10 @@ struct FindWorstPointFunctor
                 // Measure error
                 float height = heightField->getHeight(c, r);
                 float diff = fabsf(z - height);
-                if (diff > maxError && diff > error && !vertexAdded(pos)) {
-                    error = diff;
-                    worstPoint.set(pos.x(), pos.y(), height);
-                    worstPointFound = true;
+                if (diff > maxError && (worstPointsPerError.size() < batchSize || diff > worstPointsPerError.begin()->first && !vertexAdded(pos))) {
+                    if (worstPointsPerError.size() == batchSize)
+                        worstPointsPerError.erase(worstPointsPerError.begin());
+                    worstPointsPerError[diff] = osg::Vec3(pos.x(), pos.y(), height);
                 }
             }
         }
@@ -144,10 +143,9 @@ struct FindWorstPointFunctor
     osg::Vec2 heightFieldInterval;
     unsigned int heightFieldNumCols;
     unsigned int heightFieldNumRows;
-    osg::Vec3 worstPoint;
-    bool worstPointFound;
+    std::map<float, osg::Vec3> worstPointsPerError;
     float maxError;
-    float error;
+    unsigned int batchSize;
     float tolerance;
 };
 
@@ -2238,6 +2236,7 @@ osg::Node* DestinationTile::createPolygonal()
     }
     
     double maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
+    unsigned int batchSize = _dataSet->getBatchSize();
 
     // Simplify border vertices
     std::vector<unsigned int> simplifiedBottomColumns;
@@ -2429,11 +2428,11 @@ osg::Node* DestinationTile::createPolygonal()
             geometry->removePrimitiveSet(0, numPrims);
         geometry->addPrimitiveSet(delaunayTriangulator->getTriangles());
 
-        // Find most differing point
-        osg::TriangleIndexFunctor<FindWorstPointFunctor> findWorstPointFunctor;
-        findWorstPointFunctor.vertices = dv;
-        findWorstPointFunctor.heightField = grid;
-        findWorstPointFunctor.heightFieldBbox.set(
+        // Find batchSize most differing points
+        osg::TriangleIndexFunctor<FindWorstPointsFunctor> findWorstPointsFunctor;
+        findWorstPointsFunctor.vertices = dv;
+        findWorstPointsFunctor.heightField = grid;
+        findWorstPointsFunctor.heightFieldBbox.set(
             grid->getOrigin(),
             grid->getOrigin() + osg::Vec3(
                 grid->getXInterval() * grid->getNumColumns(),
@@ -2442,17 +2441,19 @@ osg::Node* DestinationTile::createPolygonal()
             )
         );
         if (useLocalToTileTransform) {
-            findWorstPointFunctor.heightFieldBbox._min = computeLocalPosition(_worldToLocal, findWorstPointFunctor.heightFieldBbox._min);
-            findWorstPointFunctor.heightFieldBbox._max = computeLocalPosition(_worldToLocal, findWorstPointFunctor.heightFieldBbox._max);
+            findWorstPointsFunctor.heightFieldBbox._min = computeLocalPosition(_worldToLocal, findWorstPointsFunctor.heightFieldBbox._min);
+            findWorstPointsFunctor.heightFieldBbox._max = computeLocalPosition(_worldToLocal, findWorstPointsFunctor.heightFieldBbox._max);
         }
-        findWorstPointFunctor.heightFieldInterval.set(grid->getXInterval(), grid->getYInterval());
-        findWorstPointFunctor.heightFieldNumCols = grid->getNumColumns();
-        findWorstPointFunctor.heightFieldNumRows = grid->getNumRows();
-        findWorstPointFunctor.maxError = maximumError;
-        findWorstPointFunctor.tolerance = (grid->getXInterval() + grid->getYInterval()) / 20.0;
-        geometry->accept(findWorstPointFunctor);
-        if (findWorstPointFunctor.error > maximumError && findWorstPointFunctor.worstPointFound) {
-            dv->push_back(findWorstPointFunctor.worstPoint);
+        findWorstPointsFunctor.heightFieldInterval.set(grid->getXInterval(), grid->getYInterval());
+        findWorstPointsFunctor.heightFieldNumCols = grid->getNumColumns();
+        findWorstPointsFunctor.heightFieldNumRows = grid->getNumRows();
+        findWorstPointsFunctor.maxError = maximumError;
+        findWorstPointsFunctor.batchSize = batchSize;
+        findWorstPointsFunctor.tolerance = (grid->getXInterval() + grid->getYInterval()) / 20.0;
+        geometry->accept(findWorstPointsFunctor);
+        if (!findWorstPointsFunctor.worstPointsPerError.empty()) {
+            for (std::map<float, osg::Vec3>::iterator it = findWorstPointsFunctor.worstPointsPerError.begin(); it != findWorstPointsFunctor.worstPointsPerError.end(); ++it)
+                dv->push_back(it->second);
 
             // Remove border vertices from list again (added by DelaunayTriangulator and would cause duplicates)
             for (osg::Vec3Array::iterator borderIt = borderVertices->begin(); borderIt != borderVertices->end(); ++borderIt) {
@@ -2461,7 +2462,7 @@ osg::Node* DestinationTile::createPolygonal()
                     dv->erase(dvIt);
             }
 
-            currentError = findWorstPointFunctor.error;
+            currentError = findWorstPointsFunctor.worstPointsPerError.rbegin()->first;
         }
         else {
             break;

@@ -43,6 +43,9 @@ int main(int argc, char** argv)
     double maximumError = 0.0;
     arguments.read("--maximum-error", maximumError);
 
+    unsigned int batchSize = 1;
+    arguments.read("--batch-size", batchSize);
+
     if (arguments.read("--version"))
     {
         std::cout<<"VirtualPlanetBuilder/osgdem version "<<vpbGetVersion()<<std::endl;
@@ -269,6 +272,7 @@ int main(int argc, char** argv)
             osg::ref_ptr<vpb::DataSet> dataset = new vpb::DataSet;
 
             dataset->setMaximumError(maximumError);
+            dataset->setBatchSize(batchSize);
 
             if (bo && !(bo->getLogFileName().empty()))
             {

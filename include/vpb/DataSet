@@ -106,6 +106,9 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         void setMaximumError(const double &maximumError);
         double getMaximumError() const { return _maximumError; }
 
+        void setBatchSize(const unsigned int &batchSize);
+        unsigned int getBatchSize() const { return _batchSize; }
+
         void addSource(Source* source, unsigned int revisionNumber);
         // void addSource(CompositeSource* composite);
 
@@ -280,6 +283,7 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         unsigned int _flatNumRows;
 
         double _maximumError;
+        unsigned int _batchSize;
 };
 
 }

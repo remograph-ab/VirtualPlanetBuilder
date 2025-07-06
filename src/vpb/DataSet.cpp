@@ -67,6 +67,7 @@ void DataSet::init()
     _flatNumRows = 0;
 
     _maximumError = 0.0;
+    _batchSize = 1;
 
     _numTextureLevels = 1;
 
@@ -79,7 +80,12 @@ void DataSet::init()
 
 void DataSet::setMaximumError(const double &maximumError)
 {
-  _maximumError = maximumError;
+    _maximumError = maximumError;
+}
+
+void DataSet::setBatchSize(const unsigned int &batchSize)
+{
+    _batchSize = batchSize;
 }
 
 void DataSet::addSource(Source* source, unsigned int revisionNumber)
