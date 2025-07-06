@@ -42,43 +42,6 @@ using namespace vpb;
 #define SHIFT_RASTER_BY_HALF_CELL
 
 
-// 7x7 mediam height field delta calculation
-osg::Vec2 getSmoothHeightDelta(osg::HeightField *hf, const unsigned int &c, const unsigned int &r)
-{
-    unsigned int numCols = hf->getNumColumns();
-    unsigned int numRows = hf->getNumRows();
-
-    std::vector<float> xvec, yvec;
-    unsigned int fromCol = static_cast<unsigned int>(std::max<int>(c - 3, 0));
-    unsigned int toCol = std::min<unsigned int>(c + 3, numCols - 1);
-    unsigned int fromRow = static_cast<unsigned int>(std::max<int>(r - 3, 0));
-    unsigned int toRow = std::min<unsigned int>(r + 3, numRows - 1);
-    for (unsigned int j = fromRow; j <= toRow; ++j) {
-        for (unsigned int i = fromCol; i <= toCol; ++i) {
-            osg::Vec2 heightDelta = hf->getHeightDelta(i, j);
-            xvec.push_back(heightDelta.x());
-            yvec.push_back(heightDelta.y());
-        }
-    }
-
-    std::sort(xvec.begin(), xvec.end());
-    std::sort(yvec.begin(), yvec.end());
-
-    if (xvec.size() % 2 == 0) {
-        return osg::Vec2(
-            0.5f * (xvec[xvec.size() / 2 - 1] + xvec[xvec.size() / 2]),
-            0.5f * (yvec[yvec.size() / 2 - 1] + yvec[yvec.size() / 2])
-        );
-    }
-    else {
-        return osg::Vec2(
-            xvec[xvec.size() / 2],
-            yvec[yvec.size() / 2]
-        );
-    }
-}
-
-
 struct FindWorstPointFunctor
 {
     FindWorstPointFunctor()
@@ -2290,6 +2253,12 @@ osg::Node* DestinationTile::createPolygonal()
         );
     }
 
+    // Make sure it's not too sparse (would cause normal shading problems) by ensuring max 1/5 of the distance between points
+    densifyBorderIndices(simplifiedBottomColumns, numColumns, 5);
+    densifyBorderIndices(simplifiedRightRows, numRows, 5);
+    densifyBorderIndices(simplifiedTopRows, numColumns, 5);
+    densifyBorderIndices(simplifiedLeftRows, numRows, 5);
+
     unsigned int vi=0;
     unsigned int r,c;
     
@@ -2442,9 +2411,12 @@ osg::Node* DestinationTile::createPolygonal()
     dv->push_back(centerPoint);
 
     // Delaunay-triangulate tile with only borders and center point first, and add points until max error is fulfilled
+    // Just in case, set a maximum number of loops
     double currentError = FLT_MAX;
     bool delaunayFailed = false;
-    while (currentError > maximumError) {
+    unsigned int loopNumber = 0;
+    unsigned int maxNumLoops = 10000;
+    while (currentError > maximumError && loopNumber < maxNumLoops) {
         osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(dv);
         delaunayTriangulator->addInputConstraint(delaunayConstraint);
         if (!delaunayTriangulator->triangulate()) {
@@ -2494,7 +2466,9 @@ osg::Node* DestinationTile::createPolygonal()
         else {
             break;
         }
+        ++loopNumber;
     }
+    std::cout << "Number of incremental Delaunay loops: " << loopNumber << std::endl;
 
     if (delaunayFailed) {
         // Failed delaunay, fallback to regular mesh
@@ -2880,6 +2854,61 @@ void DestinationTile::unrefData()
     _createdScene = 0;
     _stateset = 0;
 }
+
+
+osg::Vec2 DestinationTile::getSmoothHeightDelta(osg::HeightField *hf, const unsigned int &c, const unsigned int &r)
+{
+    // 7x7 medium height field delta calculation
+
+    unsigned int numCols = hf->getNumColumns();
+    unsigned int numRows = hf->getNumRows();
+
+    std::vector<float> xvec, yvec;
+    unsigned int fromCol = static_cast<unsigned int>(std::max<int>(c - 3, 0));
+    unsigned int toCol = std::min<unsigned int>(c + 3, numCols - 1);
+    unsigned int fromRow = static_cast<unsigned int>(std::max<int>(r - 3, 0));
+    unsigned int toRow = std::min<unsigned int>(r + 3, numRows - 1);
+    for (unsigned int j = fromRow; j <= toRow; ++j) {
+        for (unsigned int i = fromCol; i <= toCol; ++i) {
+            osg::Vec2 heightDelta = hf->getHeightDelta(i, j);
+            xvec.push_back(heightDelta.x());
+            yvec.push_back(heightDelta.y());
+        }
+    }
+
+    std::sort(xvec.begin(), xvec.end());
+    std::sort(yvec.begin(), yvec.end());
+
+    if (xvec.size() % 2 == 0) {
+        return osg::Vec2(
+            0.5f * (xvec[xvec.size() / 2 - 1] + xvec[xvec.size() / 2]),
+            0.5f * (yvec[yvec.size() / 2 - 1] + yvec[yvec.size() / 2])
+        );
+    }
+    else {
+        return osg::Vec2(
+            xvec[xvec.size() / 2],
+            yvec[yvec.size() / 2]
+        );
+    }
+}
+
+
+void DestinationTile::densifyBorderIndices(std::vector<unsigned int> &indices, const unsigned int &totalLength, const unsigned int &maxDiffFactor) {
+    unsigned int maxDiff = totalLength / maxDiffFactor;
+    std::vector<unsigned int>::iterator it = indices.begin();
+    unsigned int prevIndex = *it;
+    ++it;
+    while (it != indices.end()) {
+        while (*it > prevIndex + maxDiff) {
+            unsigned int middleIndex = (*it + prevIndex) / 2;
+            it = indices.insert(it, middleIndex);
+        }
+        prevIndex = *it;
+        ++it;
+    }
+}
+
 
 void DestinationTile::addRequiredResolutions(CompositeSource* sourceGraph)
 {

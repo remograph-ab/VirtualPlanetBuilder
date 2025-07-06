@@ -17,6 +17,7 @@
 #include <vpb/Source>
 #include <osg/ClusterCullingCallback>
 #include <osg/Texture2D>
+#include <osg/Vec2>
 
 namespace vpb
 {
@@ -179,6 +180,8 @@ public:
 
     void unrefData();
     
+    osg::Vec2 getSmoothHeightDelta(osg::HeightField *hf, const unsigned int &c, const unsigned int &r);
+    void densifyBorderIndices(std::vector<unsigned int> &indices, const unsigned int &totalLength, const unsigned int &maxDiffFactor);
 
     CompositeDestination*                       _parent;
     DataSet*                                    _dataSet;
