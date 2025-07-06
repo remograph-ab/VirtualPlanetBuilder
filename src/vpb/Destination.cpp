@@ -2415,7 +2415,7 @@ osg::Node* DestinationTile::createPolygonal()
     double currentError = FLT_MAX;
     bool delaunayFailed = false;
     unsigned int loopNumber = 0;
-    unsigned int maxNumLoops = 10000;
+    unsigned int maxNumLoops = 100000;
     while (currentError > maximumError && loopNumber < maxNumLoops) {
         osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(dv);
         delaunayTriangulator->addInputConstraint(delaunayConstraint);
