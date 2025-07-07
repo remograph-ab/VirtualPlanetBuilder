@@ -54,12 +54,12 @@ struct FindWorstPointsFunctor
     {
     }
 
-    float sign(const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
+    float sign(const osg::Vec2 v1, const osg::Vec3 v2, const osg::Vec3 v3)
     {
         return (v1.x() - v3.x()) * (v2.y() - v3.y()) - (v2.x() - v3.x()) * (v1.y() - v3.y());
     }
 
-    bool withinTriangle(const osg::Vec3 &p, const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
+    bool withinTriangle(const osg::Vec2 &p, const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
     {
         float d1 = sign(p, v1, v2);
         float d2 = sign(p, v2, v3);
@@ -71,7 +71,7 @@ struct FindWorstPointsFunctor
         return !(hasNeg && hasPos);
     }
 
-    bool vertexAdded(const osg::Vec3 &pos)
+    bool vertexAdded(const osg::Vec2 &pos)
     {
         for (osg::Vec3Array::iterator it = vertices->begin(); it != vertices->end(); ++it) {
             if (fabsf(pos.x() - it->x()) < tolerance && fabsf(pos.y() - it->y()) < tolerance)
@@ -101,10 +101,9 @@ struct FindWorstPointsFunctor
         // Traverse triangle bbox in height field
         for (unsigned int r = llRow; r <= urRow; ++r) {
             for (unsigned int c = llCol; c <= urCol; ++c) {
-                osg::Vec3 pos(
+                osg::Vec2 pos(
                     heightFieldBbox.xMin() + heightFieldInterval.x() * (c + 0.5f),
-                    heightFieldBbox.yMin() + heightFieldInterval.y() * (r + 0.5f),
-                    0.0f
+                    heightFieldBbox.yMin() + heightFieldInterval.y() * (r + 0.5f)
                 );
 
                 if (pos.x() == v1.x() && pos.y() == v1.y())
@@ -127,11 +126,28 @@ struct FindWorstPointsFunctor
 
                 // Measure error
                 float height = heightField->getHeight(c, r);
-                float diff = fabsf(z - height);
-                if (diff > maxError && (worstPointsPerError.size() < batchSize || diff > worstPointsPerError.begin()->first && !vertexAdded(pos))) {
+                float currentError = fabsf(z - height);
+                if (currentError > maxError && (worstPointsPerError.size() < batchSize || currentError > worstPointsPerError.begin()->first && !vertexAdded(pos))) {
+                    // This error is more than the allowed max error and either we haven't filled the batch yet,
+                    // or this error is higher than the current batch lowest error
+
+                    // Now check that we are not too close to the other batched points (so that neighbors aren't stealing the whole batch)
+                    bool tooClose = false;
+                    for (std::map<float, osg::Vec3>::iterator it = worstPointsPerError.begin(); it != worstPointsPerError.end(); ++it) {
+                        if ((osg::Vec2(it->second.x(), it->second.y()) - pos).length2() < batchMaxDist2) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                    if (tooClose)
+                        continue;
+
+                    // We're okay to add the batched point with its error, first remove the best point if batch is full
                     if (worstPointsPerError.size() == batchSize)
                         worstPointsPerError.erase(worstPointsPerError.begin());
-                    worstPointsPerError[diff] = osg::Vec3(pos.x(), pos.y(), height);
+                    
+                    // Now add the point with its error
+                    worstPointsPerError[currentError] = osg::Vec3(pos.x(), pos.y(), height);
                 }
             }
         }
@@ -147,6 +163,7 @@ struct FindWorstPointsFunctor
     float maxError;
     unsigned int batchSize;
     float tolerance;
+    float batchMaxDist2;
 };
 
 
@@ -2415,9 +2432,23 @@ osg::Node* DestinationTile::createPolygonal()
     bool delaunayFailed = false;
     unsigned int loopNumber = 0;
     unsigned int maxNumLoops = 100000;
+    unsigned int lastNumVertices = 0;
+    double lastError = -999.0;
+    unsigned int numEqual = 0;
     while (currentError > maximumError && loopNumber < maxNumLoops) {
         osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(dv);
         delaunayTriangulator->addInputConstraint(delaunayConstraint);
+
+        if (loopNumber > 0) {
+            // Remove any border vertices previously added by DelaunayTriangulator, would cause duplicates
+            for (osg::Vec3Array::iterator borderIt = borderVertices->begin(); borderIt != borderVertices->end(); ++borderIt) {
+                osg::Vec3Array::iterator dvIt = std::find(dv->begin(), dv->end(), *borderIt);
+                if (dvIt != dv->end())
+                    dv->erase(dvIt);
+            }
+        }
+
+        // Now Delaunay-triangulate
         if (!delaunayTriangulator->triangulate()) {
             delaunayFailed = true;
             break;
@@ -2449,20 +2480,32 @@ osg::Node* DestinationTile::createPolygonal()
         findWorstPointsFunctor.heightFieldNumRows = grid->getNumRows();
         findWorstPointsFunctor.maxError = maximumError;
         findWorstPointsFunctor.batchSize = batchSize;
-        findWorstPointsFunctor.tolerance = (grid->getXInterval() + grid->getYInterval()) / 20.0;
+        findWorstPointsFunctor.tolerance = (grid->getXInterval() + grid->getYInterval()) / 20.0f;
+        findWorstPointsFunctor.batchMaxDist2 = (3.0f * grid->getXInterval()) * (3.0f * grid->getYInterval());
         geometry->accept(findWorstPointsFunctor);
+
         if (!findWorstPointsFunctor.worstPointsPerError.empty()) {
             for (std::map<float, osg::Vec3>::iterator it = findWorstPointsFunctor.worstPointsPerError.begin(); it != findWorstPointsFunctor.worstPointsPerError.end(); ++it)
                 dv->push_back(it->second);
 
-            // Remove border vertices from list again (added by DelaunayTriangulator and would cause duplicates)
-            for (osg::Vec3Array::iterator borderIt = borderVertices->begin(); borderIt != borderVertices->end(); ++borderIt) {
-                osg::Vec3Array::iterator dvIt = std::find(dv->begin(), dv->end(), *borderIt);
-                if (dvIt != dv->end())
-                    dv->erase(dvIt);
-            }
-
             currentError = findWorstPointsFunctor.worstPointsPerError.rbegin()->first;
+            
+            // Pragmatic avoidance of infinite loop
+            // (seems to be a bug in DelaunayTriangulator causing t-vertices with cracks somehow,
+            //  resulting in the addition of the same point over and over again)
+            if (currentError == lastError && dv->size() == lastNumVertices) {
+                ++numEqual;
+                if (numEqual > 10) {
+                    // Bail out after 10 equal results
+                    std::cout << "WARNING: Give up after repeated error " << currentError << " and " << dv->size() << " triangles." << std::endl;
+                    break;
+                }
+            }
+            else {
+                numEqual = 0;
+            }
+            lastError = currentError;
+            lastNumVertices = dv->size();
         }
         else {
             break;
