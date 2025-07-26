@@ -13,6 +13,7 @@ SET(LIB_PUBLIC_HEADERS
     ${HEADER_PATH}/BuildOperation
     ${HEADER_PATH}/BuildOptions
     ${HEADER_PATH}/Commandline
+    ${HEADER_PATH}/CreateCurtainsVisitor
     ${HEADER_PATH}/DatabaseBuilder
     ${HEADER_PATH}/DataSet
     ${HEADER_PATH}/Date
@@ -28,6 +29,7 @@ SET(LIB_PUBLIC_HEADERS
     ${HEADER_PATH}/MachinePool
     ${HEADER_PATH}/ObjectPlacer
     ${HEADER_PATH}/PropertyFile
+    ${HEADER_PATH}/RamerDouglasPeucker
     ${HEADER_PATH}/ShapeFilePlacer
     ${HEADER_PATH}/Source
     ${HEADER_PATH}/SourceData
@@ -48,6 +50,7 @@ ADD_LIBRARY(${LIB_NAME}
     BuildOptions.cpp
     BuildOptionsIO.cpp
     Commandline.cpp
+    CreateCurtainsVisitor.cpp
     DatabaseBuilder.cpp
     DatabaseBuilderIO.cpp
     DataSet.cpp
@@ -63,6 +66,7 @@ ADD_LIBRARY(${LIB_NAME}
     MachinePool.cpp
     ObjectPlacer.cpp
     PropertyFile.cpp
+    RamerDouglasPeucker.cpp
     ShapeFilePlacer.cpp
     Source.cpp
     SourceData.cpp
