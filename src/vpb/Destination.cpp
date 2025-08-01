@@ -2940,6 +2940,9 @@ osg::Vec2 DestinationTile::getSmoothHeightDelta(osg::HeightField *hf, const unsi
 
 void DestinationTile::densifyBorderIndices(std::vector<unsigned int> &indices, const unsigned int &totalLength, const unsigned int &maxDiffFactor) {
     unsigned int maxDiff = totalLength / maxDiffFactor;
+    if (maxDiff == 0)
+      return;
+
     std::vector<unsigned int>::iterator it = indices.begin();
     unsigned int prevIndex = *it;
     ++it;
