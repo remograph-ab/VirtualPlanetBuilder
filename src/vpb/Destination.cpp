@@ -2261,19 +2261,19 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<unsigned int> simplifiedTopRows;
     std::vector<unsigned int> simplifiedLeftRows;
     if (maximumError > 0.0) {
-        RamerDouglasPeucker::simplifyBorderVertices(
-            grid, numColumns, numRows,
-            simplifiedBottomColumns, simplifiedRightRows,
-            simplifiedTopRows, simplifiedLeftRows,
-            static_cast<float>(maximumError / 2.0)
-        );
-    }
+      RamerDouglasPeucker::simplifyBorderVertices(
+        grid, numColumns, numRows,
+        simplifiedBottomColumns, simplifiedRightRows,
+        simplifiedTopRows, simplifiedLeftRows,
+        static_cast<float>(maximumError / 2.0)
+      );
 
-    // Make sure it's not too sparse (would cause normal shading problems) by ensuring max 1/5 of the distance between points
-    densifyBorderIndices(simplifiedBottomColumns, numColumns, 5);
-    densifyBorderIndices(simplifiedRightRows, numRows, 5);
-    densifyBorderIndices(simplifiedTopRows, numColumns, 5);
-    densifyBorderIndices(simplifiedLeftRows, numRows, 5);
+      // Make sure it's not too sparse (would cause normal shading problems) by ensuring max 1/5 of the distance between points
+      densifyBorderIndices(simplifiedBottomColumns, numColumns, 5);
+      densifyBorderIndices(simplifiedRightRows, numRows, 5);
+      densifyBorderIndices(simplifiedTopRows, numColumns, 5);
+      densifyBorderIndices(simplifiedLeftRows, numRows, 5);
+    }
 
     unsigned int vi=0;
     unsigned int r,c;
@@ -2327,26 +2327,28 @@ osg::Node* DestinationTile::createPolygonal()
             if (useLocalToTileTransform)
                 pos = computeLocalPosition(_worldToLocal, pos);
 
-            // Collect border vertices to use as Delaunay constraints
-            bool isBorder = false;
-            if (r == 0) {
-                bottomBorderVertices->push_back(pos);
-                isBorder = true;
-            }
-            else if (r == numRows - 1) {
-                topBorderVertices->insert(topBorderVertices->begin(), pos);
-                isBorder = true;
-            }
-            else if (c == 0) {
-                leftBorderVertices->insert(leftBorderVertices->begin(), pos);
-                isBorder = true;
-            }
-            else if (c == numColumns - 1) {
-                rightBorderVertices->push_back(pos);
-                isBorder = true;
-            }
-            if (isBorder) {
-                continue;
+            if (maximumError > 0.0) {
+                // Collect border vertices to use as Delaunay constraints
+                bool isBorder = false;
+                if (r == 0) {
+                    bottomBorderVertices->push_back(pos);
+                    isBorder = true;
+                }
+                else if (r == numRows - 1) {
+                    topBorderVertices->insert(topBorderVertices->begin(), pos);
+                    isBorder = true;
+                }
+                else if (c == 0) {
+                    leftBorderVertices->insert(leftBorderVertices->begin(), pos);
+                    isBorder = true;
+                }
+                else if (c == numColumns - 1) {
+                    rightBorderVertices->push_back(pos);
+                    isBorder = true;
+                }
+                if (isBorder) {
+                    continue;
+                }
             }
 
             v[vi] = pos;
@@ -2429,13 +2431,14 @@ osg::Node* DestinationTile::createPolygonal()
     // Delaunay-triangulate tile with only borders and center point first, and add points until max error is fulfilled
     // Just in case, set a maximum number of loops
     double currentError = FLT_MAX;
-    bool delaunayFailed = false;
+    bool delaunaySucceeded = false;
     unsigned int loopNumber = 0;
     unsigned int maxNumLoops = 100000;
     unsigned int lastNumVertices = 0;
     double lastError = -999.0;
     unsigned int numEqual = 0;
-    while (currentError > maximumError && loopNumber < maxNumLoops) {
+    while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
+        delaunaySucceeded = true;
         osg::ref_ptr<osgUtil::DelaunayTriangulator> delaunayTriangulator = new osgUtil::DelaunayTriangulator(dv);
         delaunayTriangulator->addInputConstraint(delaunayConstraint);
 
@@ -2450,7 +2453,7 @@ osg::Node* DestinationTile::createPolygonal()
 
         // Now Delaunay-triangulate
         if (!delaunayTriangulator->triangulate()) {
-            delaunayFailed = true;
+            delaunaySucceeded = false;
             break;
         }
         geometry->setVertexArray(dv);
@@ -2514,9 +2517,12 @@ osg::Node* DestinationTile::createPolygonal()
     }
     std::cout << "Number of incremental Delaunay loops: " << loopNumber << std::endl;
 
-    if (delaunayFailed) {
-        // Failed delaunay, fallback to regular mesh
-        std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular mesh" << std::endl;
+    if (!delaunaySucceeded) {
+        // Failed or skipped delaunay, fallback to regular mesh
+        if (maximumError > 0.0)
+          std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular mesh" << std::endl;
+        dv = dynamic_cast<osg::Vec3Array *>(v.clone(osg::CopyOp::SHALLOW_COPY));
+        geometry->setVertexArray(dv);
         osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
         geometry->addPrimitiveSet(&drawElements);
         int ei=0;
@@ -2939,6 +2945,9 @@ osg::Vec2 DestinationTile::getSmoothHeightDelta(osg::HeightField *hf, const unsi
 
 
 void DestinationTile::densifyBorderIndices(std::vector<unsigned int> &indices, const unsigned int &totalLength, const unsigned int &maxDiffFactor) {
+    if (indices.empty())
+      return;
+
     unsigned int maxDiff = totalLength / maxDiffFactor;
     if (maxDiff == 0)
       return;
