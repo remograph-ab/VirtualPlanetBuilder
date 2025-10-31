@@ -2177,6 +2177,9 @@ osg::Node* DestinationTile::createPolygonal()
     
     osg::Vec3Array& v = *(new osg::Vec3Array(numVertices));
 
+    // Keep a vertex array with all vertices (no simplified borders) in case Delaunay fails and we need regular
+    osg::ref_ptr<osg::Vec3Array> origVertices = new osg::Vec3Array();
+
     _localToWorld.makeIdentity();
     _worldToLocal.makeIdentity();
     osg::Vec3 skirtVector(0.0f,0.0f,0.0f);
@@ -2300,18 +2303,6 @@ osg::Node* DestinationTile::createPolygonal()
     {
         for(c=0;c<numColumns;++c)
         {
-            if (maximumError > 0.0) {
-                // Skip already simplified border vertices
-                if (r == 0 && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
-                    continue;
-                if (r == numRows - 1 && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
-                    continue;
-                if (c == 0 && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
-                    continue;
-                if (c == numColumns - 1 && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
-                    continue;
-            }
-
             double X = orig_X + delta_X*(double)c;
             double Y = orig_Y + delta_Y*(double)r;
             double Z = orig_Z + grid->getHeight(c,r);
@@ -2327,7 +2318,20 @@ osg::Node* DestinationTile::createPolygonal()
             if (useLocalToTileTransform)
                 pos = computeLocalPosition(_worldToLocal, pos);
 
+            // Keep a vertex array with all vertices (no simplified borders) in case Delaunay fails and we need regular
+            origVertices->push_back(pos);
+
             if (maximumError > 0.0) {
+                // Skip already simplified border vertices
+                if (r == 0 && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
+                  continue;
+                if (r == numRows - 1 && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
+                  continue;
+                if (c == 0 && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
+                  continue;
+                if (c == numColumns - 1 && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
+                  continue;
+
                 // Collect border vertices to use as Delaunay constraints
                 bool isBorder = false;
                 if (r == 0) {
@@ -2515,13 +2519,15 @@ osg::Node* DestinationTile::createPolygonal()
         }
         ++loopNumber;
     }
-    std::cout << "Number of incremental Delaunay loops: " << loopNumber << std::endl;
+    if (delaunaySucceeded)
+        std::cout << "Number of incremental Delaunay loops: " << loopNumber << std::endl;
 
     if (!delaunaySucceeded) {
         // Failed or skipped delaunay, fallback to regular mesh
         if (maximumError > 0.0)
           std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, fallback to regular mesh" << std::endl;
-        dv = dynamic_cast<osg::Vec3Array *>(v.clone(osg::CopyOp::SHALLOW_COPY));
+
+        dv = origVertices;
         geometry->setVertexArray(dv);
         osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
         geometry->addPrimitiveSet(&drawElements);
@@ -2535,8 +2541,8 @@ osg::Node* DestinationTile::createPolygonal()
                 unsigned int i01 = (r+1)*numColumns+c;
                 unsigned int i11 = (r+1)*numColumns+c+1;
 
-                float diff_00_11 = fabsf(v[i00].z()-v[i11].z());
-                float diff_01_10 = fabsf(v[i01].z()-v[i10].z());
+                float diff_00_11 = fabsf((*dv)[i00].z()-(*dv)[i11].z());
+                float diff_01_10 = fabsf((*dv)[i01].z()-(*dv)[i10].z());
                 if (diff_00_11<diff_01_10)
                 {
                     // diagonal between 00 and 11
