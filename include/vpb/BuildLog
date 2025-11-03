@@ -20,6 +20,8 @@
     #endif
 #endif
 
+#include <iomanip>
+#include <ctime>
 
 #include <stdarg.h>
 
@@ -201,16 +203,18 @@ class Logger
         {
             if (level>osg::getNotifyLevel()) return;
 
+            std::string timestampedString = Logger::getCurrentTimeString() + message;
+
             if (_buildLog.valid())
             {
-                _buildLog->log(level, message);
-                if (level==osg::FATAL) throw message;
+                _buildLog->log(level, timestampedString);
+                if (level==osg::FATAL) throw timestampedString;
             }
             else
             {
-                if (level==osg::FATAL) throw message;
+                if (level==osg::FATAL) throw timestampedString;
 
-                std::cout<<message<<std::endl;
+                std::cout<< timestampedString <<std::endl;
             }
 
         }
@@ -224,7 +228,8 @@ class Logger
             {
                 char str[1024];
                 vsnprintf(str, sizeof(str), format, args);
-                _buildLog->log(level, str);
+                std::string timestampedString = Logger::getCurrentTimeString() + std::string(str);
+                _buildLog->log(level, timestampedString);
 
                 if (level==osg::FATAL) throw std::string(str);
             }
@@ -234,20 +239,35 @@ class Logger
                 {
                     char str[1024];
                     vsnprintf(str, sizeof(str), format, args);
-                    throw std::string(str);
+                    std::string timestampedString = Logger::getCurrentTimeString() + std::string(str);
+                    throw timestampedString;
                 }
 
+                std::string timestamp = Logger::getCurrentTimeString();
+                printf(timestamp.c_str());
                 vprintf(format, args); printf("\n");
             }
             va_end(args);
 
     }
 
-    protected:
+    static std::string getCurrentTimeString()
+    {
+        time_t now = std::time(NULL);
+        tm *localTime = std::localtime(&now);
+        std::ostringstream ostr;
+        ostr << std::setfill('0') << std::setw(2) << localTime->tm_hour;
+        ostr << ":" << std::setfill('0') << std::setw(2) << localTime->tm_min;
+        ostr << ":" << std::setfill('0') << std::setw(2) << localTime->tm_sec;
+        ostr << " ";
+        return ostr.str();
+    }
+
+
+protected:
 
         osg::ref_ptr<BuildLog> _buildLog;
-        
-        
+
 };
 
 }

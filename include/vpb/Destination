@@ -173,6 +173,9 @@ public:
     osg::Node* createHeightField();
     osg::Node* createTerrainTile();
     osg::Node* createPolygonal();
+
+    // TEMP
+    //static void reportTimes();
     
     osg::ClusterCullingCallback* createClusterCullingCallback();
 

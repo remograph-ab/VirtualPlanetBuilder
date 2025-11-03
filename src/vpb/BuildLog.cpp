@@ -88,7 +88,10 @@ void vpb::log(osg::NotifySeverity level, const char* format, ...)
     va_list args; va_start(args, format);
     char str[1024];
     vsnprintf(str, sizeof(str), format, args);
-    tl.log(level, str);
+
+    std::string timestampedString = Logger::getCurrentTimeString() + std::string(str);
+
+    tl.log(level, timestampedString.c_str());
     va_end(args);
 }
 

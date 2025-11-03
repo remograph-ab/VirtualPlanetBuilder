@@ -2041,6 +2041,9 @@ void DataSet::_buildDestination(bool writeToDisk)
             populateDestinationGraphFromSources();
             _rootNode = _destinationGraph->createScene();
 
+            // TEMP
+            //DestinationTile::reportTimes();
+
             if (_decorateWithMultiTextureControl)
             {
                 _rootNode = decorateWithMultiTextureControl(_rootNode.get());
@@ -3252,7 +3255,7 @@ int DataSet::_run()
         if (startPoint)
         {
             DestinationTile::Sources sources = startPoint->getAllContributingSources();
-            log(osg::NOTICE,"There are %d contributing source files:",sources.size());
+            log(osg::NOTICE,"There are %d contributing source file(s):",sources.size());
 
             for(DestinationTile::Sources::iterator itr = sources.begin();
                 itr != sources.end();
