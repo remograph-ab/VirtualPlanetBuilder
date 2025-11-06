@@ -46,7 +46,7 @@ int main(int argc, char** argv)
     unsigned int batchSize = 10;
     arguments.read("--batch-size", batchSize);
 
-    float batchMaxDist2 = (3.0f * batchSize) * (3.0f * batchSize);
+    float batchMaxDist2 = 0.0f;
     arguments.read("--batch-max-dist2", batchMaxDist2);
 
     if (arguments.read("--version"))

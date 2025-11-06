@@ -2398,6 +2398,9 @@ osg::Node* DestinationTile::createPolygonal()
     double maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
     unsigned int batchSize = _dataSet->getBatchSize();
     float batchMaxDist2 = _dataSet->getBatchMaxDist2();
+    if (batchMaxDist2 == 0.0f) {
+        batchMaxDist2 = (3.0f * grid->getXInterval()) * (3.0f * grid->getYInterval());
+    }
 
     // Simplify border vertices
     std::vector<unsigned int> simplifiedBottomColumns;
