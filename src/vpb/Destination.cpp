@@ -2602,6 +2602,12 @@ osg::Node* DestinationTile::createPolygonal()
     //addDebugTime("stateset", startTime);
     //startTime = osg::Timer::instance()->tick();
 
+    // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
+    std::reverse(topBorderVertices.begin(), topBorderVertices.end());
+    std::reverse(leftBorderVertices.begin(), leftBorderVertices.end());
+    std::reverse(topBorderHeights.begin(), topBorderHeights.end());
+    std::reverse(leftBorderHeights.begin(), leftBorderHeights.end());
+
     // Create Delaunay constraints for borders
     std::vector<CDT::V2d<float> > borderVertices;
     borderVertices.insert(borderVertices.end(), bottomBorderVertices.begin(), bottomBorderVertices.end());
@@ -2609,14 +2615,10 @@ osg::Node* DestinationTile::createPolygonal()
     borderVertices.insert(borderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
     borderVertices.insert(borderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
     CDT::EdgeVec constraintEdges;
-    for (CDT::VertInd i = 0; i < bottomBorderVertices.size() - 1; ++i)
-      constraintEdges.push_back(CDT::Edge(i, i + 1));
-    for (CDT::VertInd i = 0; i < rightBorderVertices.size() - 1; ++i)
+    for (CDT::VertInd i = 0; i < borderVertices.size() - 1; ++i) {
         constraintEdges.push_back(CDT::Edge(i, i + 1));
-    for (CDT::VertInd i = 0; i < topBorderVertices.size() - 1; ++i)
-        constraintEdges.push_back(CDT::Edge(i, i + 1));
-    for (CDT::VertInd i = 0; i < leftBorderVertices.size() - 1; ++i)
-        constraintEdges.push_back(CDT::Edge(i, i + 1));
+    }
+    constraintEdges.push_back(CDT::Edge(borderVertices.size() - 1, 0));
 
     //addDebugTime("constraints", startTime);
     //startTime = osg::Timer::instance()->tick();
@@ -2639,7 +2641,7 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<float> cdtHeights; // Heights excl. borders
     double currentError = FLT_MAX;
     bool delaunaySucceeded = false;
-    unsigned int loopNumber = 0;
+    unsigned int loopNumber = 1;
     unsigned int maxNumLoops = 100000;
     unsigned int lastNumVertices = 0;
     double lastError = -999.0;
@@ -2762,12 +2764,55 @@ osg::Node* DestinationTile::createPolygonal()
             //addDebugTime("pragmatic avoidance of infinite loop", startTime);
         }
         else {
+            // TEMP
+            /*
+            if (_level == 3 && _tileX == 1 && _tileY == 1) {
+                //std::ofstream debugStream("C:\\tmp\\debug.cpp", std::ios::out);
+                //debugStream << "std::vector<CDT::V2d<float> > borderVertices;" << std::endl;
+                std::ofstream debugStream("C:\\tmp\\debug.lua", std::ios::out);
+                debugStream << "remo.newModel(\"C:\\\\tmp\\\\debug.flt\")" << std::endl << std::endl;
+                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"border vertices\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                for (std::vector<CDT::V2d<float> >::iterator itr = borderVertices.begin(); itr != borderVertices.end(); ++itr) {
+                    //debugStream << "borderVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
+                    debugStream << "remo.createLightPoint(false, " << itr->x << ", " << itr->y << ", 0)" << std::endl;
+                }
+
+                //debugStream << "std::vector<CDT::V2d<float> > cdtVertices;" << std::endl;
+                debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"inner vertices\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                for (std::vector<CDT::V2d<float> >::iterator itr = cdtVertices.begin(); itr != cdtVertices.end(); ++itr) {
+                    //debugStream << "cdtVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
+                    debugStream << "remo.createLightPoint(false, " << itr->x << ", " << itr->y << ", 0)" << std::endl;
+                }
+
+                //debugStream << "CDT::EdgeVec constraintEdges;" << std::endl;
+                debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"border constraint edges\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                for (CDT::EdgeVec::iterator itr = constraintEdges.begin(); itr != constraintEdges.end(); ++itr) {
+                    //debugStream << "constraintEdges.push_back(CDT::Edge(" << itr->v1() << ", " << itr->v2() << "))" << std::endl;
+                    debugStream << "remo.createPolygon(";
+                    debugStream << borderVertices[itr->v1()].x << "," << borderVertices[itr->v1()].y << ",0, ";
+                    debugStream << borderVertices[itr->v2()].x << "," << borderVertices[itr->v2()].y << ",0)" << std::endl;
+                }
+                debugStream << std::endl << "remo.saveModel()" << std::endl;
+                debugStream.close();
+            }
+            */
+
             break;
         }
         ++loopNumber;
     }
     if (delaunaySucceeded) {
-        log(osg::NOTICE, "Number of incremental Delaunay loops: %d", loopNumber);
+        log(osg::NOTICE, "Level %d tile %d,%d: %d incremental Delaunay loops", _level, _tileX, _tileY, loopNumber);
     }
 
     if (!delaunaySucceeded) {
