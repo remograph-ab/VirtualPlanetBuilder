@@ -94,7 +94,8 @@ public:
         osg::HeightField *heightField,
         const osg::BoundingBox &heightFieldBbox,
         const float &maxError,
-        const float &batchSize
+        const float &batchSize,
+        const float &batchMaxDist2
     )
         : _triangulation(triangulation)
         , _borderHeights(borderHeights)
@@ -103,6 +104,7 @@ public:
         , _heightFieldBbox(heightFieldBbox)
         , _maxError(maxError)
         , _batchSize(batchSize)
+        , _batchMaxDist2(batchMaxDist2)
     {
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
@@ -113,7 +115,6 @@ public:
         _heightFieldNumCols = _heightField->getNumColumns();
         _heightFieldNumRows = _heightField->getNumRows();
         _tolerance = (_heightField->getXInterval() + _heightField->getYInterval()) / 20.0f;
-        _batchMaxDist2 = (3.0f * _heightField->getXInterval()) * (3.0f * _heightField->getYInterval());
 
         //addDebugTime("WorstPointsFinder constructor", startTime);
     }
@@ -291,6 +292,7 @@ private:
     osg::BoundingBox _heightFieldBbox;
     float _maxError;
     float _batchSize;
+    float _batchMaxDist2;
 
     float _heightFieldWidth;
     float _heightFieldHeight;
@@ -299,7 +301,6 @@ private:
     unsigned int _heightFieldNumCols;
     unsigned int _heightFieldNumRows;
     float _tolerance;
-    float _batchMaxDist2;
 };
 
 
@@ -2396,6 +2397,7 @@ osg::Node* DestinationTile::createPolygonal()
     
     double maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
     unsigned int batchSize = _dataSet->getBatchSize();
+    float batchMaxDist2 = _dataSet->getBatchMaxDist2();
 
     // Simplify border vertices
     std::vector<unsigned int> simplifiedBottomColumns;
@@ -2721,7 +2723,7 @@ osg::Node* DestinationTile::createPolygonal()
         //startTime = osg::Timer::instance()->tick();
 
         // Find batchSize most differing points
-        WorstPointsFinder worstPointFinder(delaunayTriangulation, borderHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize);
+        WorstPointsFinder worstPointFinder(delaunayTriangulation, borderHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
         std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
 
         if (!worstPointsPerError.empty()) {

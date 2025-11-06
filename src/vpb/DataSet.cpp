@@ -68,6 +68,7 @@ void DataSet::init()
 
     _maximumError = 0.0;
     _batchSize = 1;
+    _batchMaxDist2 = 0.0f;
 
     _numTextureLevels = 1;
 
@@ -86,6 +87,11 @@ void DataSet::setMaximumError(const double &maximumError)
 void DataSet::setBatchSize(const unsigned int &batchSize)
 {
     _batchSize = batchSize;
+}
+
+void DataSet::setBatchMaxDist2(const float &batchMaxDist2)
+{
+    _batchMaxDist2 = batchMaxDist2;
 }
 
 void DataSet::addSource(Source* source, unsigned int revisionNumber)
