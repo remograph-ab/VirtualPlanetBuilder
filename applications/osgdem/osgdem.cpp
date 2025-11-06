@@ -46,8 +46,8 @@ int main(int argc, char** argv)
     unsigned int batchSize = 10;
     arguments.read("--batch-size", batchSize);
 
-    float batchMaxDist2 = 0.0f;
-    arguments.read("--batch-max-dist2", batchMaxDist2);
+    float batchMaxDist = 0.0f;
+    arguments.read("--batch-max-dist", batchMaxDist);
 
     if (arguments.read("--version"))
     {
@@ -276,7 +276,7 @@ int main(int argc, char** argv)
 
             dataset->setMaximumError(maximumError);
             dataset->setBatchSize(batchSize);
-            dataset->setBatchMaxDist2(batchMaxDist2);
+            dataset->setBatchMaxDist2(batchMaxDist * batchMaxDist);
 
             if (bo && !(bo->getLogFileName().empty()))
             {
