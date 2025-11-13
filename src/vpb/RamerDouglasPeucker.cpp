@@ -17,7 +17,7 @@ void RamerDouglasPeucker::simplifyBorderVertices(
     // Bottom
     std::vector<float> bottomHeights;
     for (unsigned int c = 0; c < numColumns; ++c)
-        bottomHeights.push_back(grid->getHeight(static_cast<unsigned int>(c), 0));
+        bottomHeights.push_back(grid->getHeight(c, 0));
     RamerDouglasPeucker::simplifyHeights(bottomHeights, grid->getXInterval(), maximumError, simplifiedBottomColumns);
 
     // Right
@@ -29,7 +29,7 @@ void RamerDouglasPeucker::simplifyBorderVertices(
     // Top
     std::vector<float> topHeights;
     for (unsigned int c = 0; c < numColumns; ++c)
-        topHeights.push_back(grid->getHeight(static_cast<unsigned int>(c), numRows - 1));
+        topHeights.push_back(grid->getHeight(c, numRows - 1));
     RamerDouglasPeucker::simplifyHeights(topHeights, grid->getXInterval(), maximumError, simplifiedTopRows);
 
     // Left

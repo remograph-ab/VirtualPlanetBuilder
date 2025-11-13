@@ -171,8 +171,8 @@ public:
                 for (unsigned int c = llCol; c <= urCol; ++c) {
                     //startTime = osg::Timer::instance()->tick();
 
-                    float x = _heightFieldWest + _heightFieldWidth * (c + 0.5f);
-                    float y = _heightFieldSouth + _heightFieldHeight * (r + 0.5f);
+                    float x = _heightFieldWest + _heightFieldWidth * c;
+                    float y = _heightFieldSouth + _heightFieldHeight * r;
 
                     //addDebugTime("getWorstPointPerError: extract heightfield pos", startTime);
                     //startTime = osg::Timer::instance()->tick();
@@ -2449,6 +2449,20 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<float> leftBorderHeights;
     std::vector<float> rightBorderHeights;
 
+    // TEMP
+    /*
+    std::ofstream debugStream;
+    if (_level == 3 && _tileX == 1 && _tileY == 0) {
+        debugStream.open("C:\\tmp\\debug.lua", std::ios::out);
+        debugStream << "remo.selectAll(\"HEADER\")" << std::endl;
+        debugStream << "remo.setAttributes(\"RGB Mode\", true)" << std::endl;
+        debugStream << "remo.newModel(\"C:\\\\tmp\\\\debug2.flt\")" << std::endl << std::endl;
+        debugStream << "remo.selectByName(remo.create(\"GROUP\"))" << std::endl;
+        debugStream << "remo.setAttributes(\"Name\", \"all\")" << std::endl;
+        debugStream << "remo.setParent()" << std::endl;
+    }
+    */
+
     for(r=0;r<numRows;++r)
     {
         for(c=0;c<numColumns;++c)
@@ -2479,6 +2493,13 @@ osg::Node* DestinationTile::createPolygonal()
             if (useLocalToTileTransform)
                 pos = computeLocalPosition(_worldToLocal, pos);
 
+            // TEMP
+            /*
+            if (_level == 3 && _tileX == 1 && _tileY == 0) {
+                debugStream << "remo.createLightPoint(false, " << pos.x() << ", " << pos.y() << ", " << pos.z() << ")" << std::endl;
+            }
+            */
+
             //addDebugTime("computeLocalPosition", startTime);
             //startTime = osg::Timer::instance()->tick();
 
@@ -2491,13 +2512,13 @@ osg::Node* DestinationTile::createPolygonal()
                 //startTime = osg::Timer::instance()->tick();
 
                 // Skip already simplified border vertices
-                if (r == 0 && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
+                if (r == 0 && !simplifiedBottomColumns.empty() && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
                   continue;
-                if (r == numRows - 1 && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
+                if (r == numRows - 1 && !simplifiedTopRows.empty() && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
                   continue;
-                if (c == 0 && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
+                if (c == 0 && !simplifiedLeftRows.empty() && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
                   continue;
-                if (c == numColumns - 1 && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
+                if (c == numColumns - 1 && !simplifiedRightRows.empty() && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
                   continue;
 
                 //addDebugTime("skip borders", startTime);
@@ -2766,47 +2787,49 @@ osg::Node* DestinationTile::createPolygonal()
         else {
             // TEMP
             /*
-            if (_level == 3 && _tileX == 1 && _tileY == 1) {
-                //std::ofstream debugStream("C:\\tmp\\debug.cpp", std::ios::out);
-                //debugStream << "std::vector<CDT::V2d<float> > borderVertices;" << std::endl;
-                std::ofstream debugStream("C:\\tmp\\debug.lua", std::ios::out);
-                debugStream << "remo.newModel(\"C:\\\\tmp\\\\debug.flt\")" << std::endl << std::endl;
-                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"border vertices\")" << std::endl;
+            if (_level == 3 && _tileX == 1 && _tileY == 0) {
+                debugStream << std::endl << "remo.setCurrentColorRGB(255,0,0)" << std::endl;
+                debugStream << "remo.selectAll(\"HEADER\")" << std::endl;
                 debugStream << "remo.setParent()" << std::endl;
-                for (std::vector<CDT::V2d<float> >::iterator itr = borderVertices.begin(); itr != borderVertices.end(); ++itr) {
+                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"border\")" << std::endl;
+                debugStream << "remo.setParent()" << std::endl;
+                for (unsigned int i = 0; i < borderVertices.size(); ++i) {
+                    CDT::V2d<float> borderVertex = borderVertices[i];
+                    float borderHeight = borderHeights[i];
                     //debugStream << "borderVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
-                    debugStream << "remo.createLightPoint(false, " << itr->x << ", " << itr->y << ", 0)" << std::endl;
+                    debugStream << "remo.createLightPoint(false, " << borderVertex.x << ", " << borderVertex.y << ", " << borderHeight << ")" << std::endl;
                 }
 
                 //debugStream << "std::vector<CDT::V2d<float> > cdtVertices;" << std::endl;
                 debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
                 debugStream << "remo.setParent()" << std::endl;
                 debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"inner vertices\")" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"inner\")" << std::endl;
                 debugStream << "remo.setParent()" << std::endl;
-                for (std::vector<CDT::V2d<float> >::iterator itr = cdtVertices.begin(); itr != cdtVertices.end(); ++itr) {
-                    //debugStream << "cdtVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
-                    debugStream << "remo.createLightPoint(false, " << itr->x << ", " << itr->y << ", 0)" << std::endl;
+                for (unsigned int i = 0; i < cdtVertices.size(); ++i) {
+                    CDT::V2d<float> cdtVertex = cdtVertices[i];
+                    float cdtHeight = cdtHeights[i];
+                    //debugStream << "borderVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
+                    debugStream << "remo.createLightPoint(false, " << cdtVertex.x << ", " << cdtVertex.y << ", " << cdtHeight << ")" << std::endl;
                 }
 
                 //debugStream << "CDT::EdgeVec constraintEdges;" << std::endl;
                 debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
                 debugStream << "remo.setParent()" << std::endl;
                 debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"border constraint edges\")" << std::endl;
+                debugStream << "remo.setAttributes(\"Name\", \"constraints\")" << std::endl;
                 debugStream << "remo.setParent()" << std::endl;
                 for (CDT::EdgeVec::iterator itr = constraintEdges.begin(); itr != constraintEdges.end(); ++itr) {
                     //debugStream << "constraintEdges.push_back(CDT::Edge(" << itr->v1() << ", " << itr->v2() << "))" << std::endl;
                     debugStream << "remo.createPolygon(";
-                    debugStream << borderVertices[itr->v1()].x << "," << borderVertices[itr->v1()].y << ",0, ";
-                    debugStream << borderVertices[itr->v2()].x << "," << borderVertices[itr->v2()].y << ",0)" << std::endl;
+                    debugStream << borderVertices[itr->v1()].x << "," << borderVertices[itr->v1()].y << "," << borderHeights[itr->v1()] << ", ";
+                    debugStream << borderVertices[itr->v2()].x << "," << borderVertices[itr->v2()].y << "," << borderHeights[itr->v2()] << ")" << std::endl;
                 }
                 debugStream << std::endl << "remo.saveModel()" << std::endl;
                 debugStream.close();
             }
             */
-
             break;
         }
         ++loopNumber;
