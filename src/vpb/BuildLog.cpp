@@ -30,7 +30,7 @@ struct ThreadLog
     void log(osg::NotifySeverity level, const char* str)
     {
         if (!_logStack.empty()) _logStack.back()->log(level, str);
-        else if (level<=osg::getNotifyLevel()) { printf("%s\n",str); }
+        else if (level <= osg::getNotifyLevel()) { printf("%s\n", str); fflush(stdout); }
     }
 
     OperationLogStack _logStack;
