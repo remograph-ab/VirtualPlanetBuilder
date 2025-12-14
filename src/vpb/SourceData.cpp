@@ -487,15 +487,15 @@ void SourceData::readImage(DestinationData& destination)
 
 
 
-           int windowX = osg::maximum((int)floorf((float)_numValuesX*(intersect_bb.xMin()-xoffset-s_bb.xMin())/(s_bb.xMax()-s_bb.xMin())),0);
-           int windowY = osg::maximum((int)floorf((float)_numValuesY*(intersect_bb.yMin()-s_bb.yMin())/(s_bb.yMax()-s_bb.yMin())),0);
-           int windowWidth = osg::minimum((int)ceilf((float)_numValuesX*(intersect_bb.xMax()-xoffset-s_bb.xMin())/(s_bb.xMax()-s_bb.xMin())),(int)_numValuesX)-windowX;
-           int windowHeight = osg::minimum((int)ceilf((float)_numValuesY*(intersect_bb.yMax()-s_bb.yMin())/(s_bb.yMax()-s_bb.yMin())),(int)_numValuesY)-windowY;
-
-           int destX = osg::maximum((int)floorf((float)destination._image->s()*(intersect_bb.xMin()-d_bb.xMin())/(d_bb.xMax()-d_bb.xMin())),0);
-           int destY = osg::maximum((int)floorf((float)destination._image->t()*(intersect_bb.yMin()-d_bb.yMin())/(d_bb.yMax()-d_bb.yMin())),0);
-           int destWidth = osg::minimum((int)ceilf((float)destination._image->s()*(intersect_bb.xMax()-d_bb.xMin())/(d_bb.xMax()-d_bb.xMin())),(int)destination._image->s())-destX;
-           int destHeight = osg::minimum((int)ceilf((float)destination._image->t()*(intersect_bb.yMax()-d_bb.yMin())/(d_bb.yMax()-d_bb.yMin())),(int)destination._image->t())-destY;
+            int windowX = osg::maximum((int)floorf((float)_numValuesX*(intersect_bb.xMin()-xoffset-s_bb.xMin())/(s_bb.xMax()-s_bb.xMin())),0);
+            int windowY = osg::maximum((int)floorf((float)_numValuesY*(intersect_bb.yMin()-s_bb.yMin())/(s_bb.yMax()-s_bb.yMin())),0);
+            int windowWidth = osg::minimum((int)ceilf((float)_numValuesX*(intersect_bb.xMax()-xoffset-s_bb.xMin())/(s_bb.xMax()-s_bb.xMin())),(int)_numValuesX)-windowX;
+            int windowHeight = osg::minimum((int)ceilf((float)_numValuesY*(intersect_bb.yMax()-s_bb.yMin())/(s_bb.yMax()-s_bb.yMin())),(int)_numValuesY)-windowY;
+            
+            int destX = osg::maximum((int)floorf((float)destination._image->s()*(intersect_bb.xMin()-d_bb.xMin())/(d_bb.xMax()-d_bb.xMin())),0);
+            int destY = osg::maximum((int)floorf((float)destination._image->t()*(intersect_bb.yMin()-d_bb.yMin())/(d_bb.yMax()-d_bb.yMin())),0);
+            int destWidth = osg::minimum((int)ceilf((float)destination._image->s()*(intersect_bb.xMax()-d_bb.xMin())/(d_bb.xMax()-d_bb.xMin())),(int)destination._image->s())-destX;
+            int destHeight = osg::minimum((int)ceilf((float)destination._image->t()*(intersect_bb.yMax()-d_bb.yMin())/(d_bb.yMax()-d_bb.yMin())),(int)destination._image->t())-destY;
 
             log(osg::INFO,"   copying from %d\t%d\t%d\t%d",windowX,windowY,windowWidth,windowHeight);
             log(osg::INFO,"             to %d\t%d\t%d\t%d",destX,destY,destWidth,destHeight);
@@ -843,7 +843,8 @@ void SourceData::readImage(DestinationData& destination)
                                     }
                                 }
                             }
-                            else if (sourceColumnPtr_float[0]>0.0f || sourceColumnPtr_float[1]>0.0f || sourceColumnPtr_float[2]>0.0f)
+                            // NOTE: This condition made prevented completely black pixels
+                            else //if (sourceColumnPtr_float[0]>0.0f || sourceColumnPtr_float[1]>0.0f || sourceColumnPtr_float[2]>0.0f)
                             {
                                 destinationColumnPtr_float[0] = sourceColumnPtr_float[0];
                                 destinationColumnPtr_float[1] = sourceColumnPtr_float[1];
@@ -884,7 +885,8 @@ void SourceData::readImage(DestinationData& destination)
                                     }
                                 }
                             }
-                            else if (sourceColumnPtr[0]!=0 || sourceColumnPtr[1]!=0 || sourceColumnPtr[2]!=0)
+                            // NOTE: This condition made prevented completely black pixels
+                            else //if (sourceColumnPtr[0]!=0 || sourceColumnPtr[1]!=0 || sourceColumnPtr[2]!=0)
                             {
                                 destinationColumnPtr[0] = sourceColumnPtr[0];
                                 destinationColumnPtr[1] = sourceColumnPtr[1];

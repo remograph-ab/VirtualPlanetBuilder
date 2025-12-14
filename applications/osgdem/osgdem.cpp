@@ -40,6 +40,9 @@ int main(int argc, char** argv)
 
     commandline.getUsage(*arguments.getApplicationUsage());
 
+    bool regular = false;
+    while (arguments.read("--regular")) { regular = true; }
+
     double maximumError = 0.0;
     arguments.read("--maximum-error", maximumError);
 
@@ -274,6 +277,7 @@ int main(int argc, char** argv)
             }
             osg::ref_ptr<vpb::DataSet> dataset = new vpb::DataSet;
 
+            dataset->setRegular(regular);
             dataset->setMaximumError(maximumError);
             dataset->setBatchSize(batchSize);
             dataset->setBatchMaxDist2(batchMaxDist * batchMaxDist);

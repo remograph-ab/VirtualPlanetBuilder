@@ -691,80 +691,80 @@ void DestinationTile::allocate()
                 imageData._imageDestination->_image->allocateImage(texture_numColumns, texture_numRows, 1, getPixelFormat(layerNum), getPixelType(layerNum));
 
                 if (_defaultTexture.valid()) {
-                  // Initialize with repeated default image
-                  osg::ref_ptr<osg::Image> defaultImage = _defaultTexture->getImage();
-                  osg::ref_ptr<osg::Image> scaledDefaultImage;
-                  double defaultScale = _defaultTextureResolution / texture_dx;
-                  if (defaultScale != 1.0) {
-                    scaledDefaultImage = dynamic_cast<osg::Image *>(defaultImage->clone(osg::CopyOp::DEEP_COPY_ALL));
-                    scaledDefaultImage->scaleImage(int(defaultImage->s() * defaultScale + 0.5), int(defaultImage->t() * defaultScale + 0.5), 1);
-                  }
-                  else {
-                    scaledDefaultImage = defaultImage;
-                  }
-
-                  double extentWidth = _extents.xMax() - _extents.xMin();
-                  double extentHeight = _extents.yMax() - _extents.yMin();
-                  double defaultWidth = defaultImage->s() * _defaultTextureResolution;
-                  double defaultHeight = defaultImage->t() * _defaultTextureResolution;
-                  int numRepetitionsX = int(ceil(extentWidth / defaultWidth));
-                  int numRepetitionsY = int(ceil(extentHeight / defaultHeight));
-
-                  osg::PixelStorageModes psm;
-                  psm.pack_alignment = imageData._imageDestination->_image->getPacking();
-                  psm.pack_row_length = imageData._imageDestination->_image->s();
-                  psm.unpack_alignment = scaledDefaultImage->getPacking();
-                  psm.unpack_row_length = scaledDefaultImage->s();
-                  GLenum pixelFormat = imageData._imageDestination->_image->getPixelFormat();
-
-                  // Size in pixels of first default image after being virtually repeated from the origin
-                  int firstWidth = int((defaultWidth - fmod(_extents.xMin(), defaultWidth)) / texture_dx + 0.5);
-                  int firstHeight = int((defaultHeight - fmod(_extents.yMin(), defaultHeight)) / texture_dy + 0.5);
-                  int lastWidth = int((0 + fmod(_extents.xMax(), defaultWidth)) / texture_dx + 0.5);
-                  int lastHeight = int((0 + fmod(_extents.yMax(), defaultHeight)) / texture_dy + 0.5);
-
-                  if (firstWidth < scaledDefaultImage->s())
-                    ++numRepetitionsX;
-                  if (firstHeight < scaledDefaultImage->t())
-                    ++numRepetitionsY;
-
-                  unsigned int targetTOffset = 0;
-                  for (int y = 0; y < numRepetitionsY; ++y) {
-                    if (targetTOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->t()))
-                      continue;
-                    unsigned int targetSOffset = 0;
-                    unsigned int sourceTOffset = (y == 0 ? std::max<int>(scaledDefaultImage->t() - firstHeight, 0) : 0);
-                    GLsizei clonedHeight = (y == 0 ? firstHeight : (y == numRepetitionsY - 1 ? lastHeight : scaledDefaultImage->t()));
-                    clonedHeight = std::min<unsigned int>(clonedHeight, imageData._imageDestination->_image->t() - targetTOffset);
-
-                    for (int x = 0; x < numRepetitionsX; ++x) {
-                      if (targetSOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->s()))
-                        continue;
-                      unsigned int sourceSOffset = (x == 0 ? std::max<int>(scaledDefaultImage->s() - firstWidth, 0) : 0);
-
-                      unsigned char *sourceData = scaledDefaultImage->data(sourceSOffset, sourceTOffset, 0);
-                      unsigned char *destinationData = imageData._imageDestination->_image->data(targetSOffset, targetTOffset, 0);
-                      GLsizei clonedWidth = (x == 0 ? firstWidth : (x == numRepetitionsX - 1 ? lastWidth : scaledDefaultImage->s()));
-                      clonedWidth = std::min<unsigned int>(clonedWidth, imageData._imageDestination->_image->s() - targetSOffset);
-
-                      osg::gluScaleImage(&psm, pixelFormat,
-                        clonedWidth, clonedHeight, scaledDefaultImage->getDataType(), sourceData,
-                        clonedWidth, clonedHeight, imageData._imageDestination->_image->getDataType(), destinationData
-                      );
-
-                      targetSOffset += (x == 0 ? firstWidth : scaledDefaultImage->s());
+                    // Initialize with repeated default image
+                    osg::ref_ptr<osg::Image> defaultImage = _defaultTexture->getImage();
+                    osg::ref_ptr<osg::Image> scaledDefaultImage;
+                    double defaultScale = _defaultTextureResolution / texture_dx;
+                    if (defaultScale != 1.0) {
+                        scaledDefaultImage = dynamic_cast<osg::Image *>(defaultImage->clone(osg::CopyOp::DEEP_COPY_ALL));
+                        scaledDefaultImage->scaleImage(int(defaultImage->s() * defaultScale + 0.5), int(defaultImage->t() * defaultScale + 0.5), 1);
                     }
-                    targetTOffset += (y == 0 ? firstHeight : scaledDefaultImage->t());
-                  }
+                    else {
+                        scaledDefaultImage = defaultImage;
+                    }
+
+                    double extentWidth = _extents.xMax() - _extents.xMin();
+                    double extentHeight = _extents.yMax() - _extents.yMin();
+                    double defaultWidth = defaultImage->s() * _defaultTextureResolution;
+                    double defaultHeight = defaultImage->t() * _defaultTextureResolution;
+                    int numRepetitionsX = int(ceil(extentWidth / defaultWidth));
+                    int numRepetitionsY = int(ceil(extentHeight / defaultHeight));
+
+                    osg::PixelStorageModes psm;
+                    psm.pack_alignment = imageData._imageDestination->_image->getPacking();
+                    psm.pack_row_length = imageData._imageDestination->_image->s();
+                    psm.unpack_alignment = scaledDefaultImage->getPacking();
+                    psm.unpack_row_length = scaledDefaultImage->s();
+                    GLenum pixelFormat = imageData._imageDestination->_image->getPixelFormat();
+
+                    // Size in pixels of first default image after being virtually repeated from the origin
+                    int firstWidth = int((defaultWidth - fmod(_extents.xMin(), defaultWidth)) / texture_dx + 0.5);
+                    int firstHeight = int((defaultHeight - fmod(_extents.yMin(), defaultHeight)) / texture_dy + 0.5);
+                    int lastWidth = int((0 + fmod(_extents.xMax(), defaultWidth)) / texture_dx + 0.5);
+                    int lastHeight = int((0 + fmod(_extents.yMax(), defaultHeight)) / texture_dy + 0.5);
+
+                    if (firstWidth < scaledDefaultImage->s())
+                        ++numRepetitionsX;
+                    if (firstHeight < scaledDefaultImage->t())
+                        ++numRepetitionsY;
+
+                    unsigned int targetTOffset = 0;
+                    for (int y = 0; y < numRepetitionsY; ++y) {
+                        if (targetTOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->t()))
+                            continue;
+                        unsigned int targetSOffset = 0;
+                        unsigned int sourceTOffset = (y == 0 ? std::max<int>(scaledDefaultImage->t() - firstHeight, 0) : 0);
+                        GLsizei clonedHeight = (y == 0 ? firstHeight : (y == numRepetitionsY - 1 ? lastHeight : scaledDefaultImage->t()));
+                        clonedHeight = std::min<unsigned int>(clonedHeight, imageData._imageDestination->_image->t() - targetTOffset);
+
+                        for (int x = 0; x < numRepetitionsX; ++x) {
+                            if (targetSOffset >= static_cast<unsigned int>(imageData._imageDestination->_image->s()))
+                                continue;
+                            unsigned int sourceSOffset = (x == 0 ? std::max<int>(scaledDefaultImage->s() - firstWidth, 0) : 0);
+
+                            unsigned char *sourceData = scaledDefaultImage->data(sourceSOffset, sourceTOffset, 0);
+                            unsigned char *destinationData = imageData._imageDestination->_image->data(targetSOffset, targetTOffset, 0);
+                            GLsizei clonedWidth = (x == 0 ? firstWidth : (x == numRepetitionsX - 1 ? lastWidth : scaledDefaultImage->s()));
+                            clonedWidth = std::min<unsigned int>(clonedWidth, imageData._imageDestination->_image->s() - targetSOffset);
+
+                            osg::gluScaleImage(&psm, pixelFormat,
+                                clonedWidth, clonedHeight, scaledDefaultImage->getDataType(), sourceData,
+                                clonedWidth, clonedHeight, imageData._imageDestination->_image->getDataType(), destinationData
+                            );
+
+                            targetSOffset += (x == 0 ? firstWidth : scaledDefaultImage->s());
+                        }
+                        targetTOffset += (y == 0 ? firstHeight : scaledDefaultImage->t());
+                    }
                 }
                 else {
-                  // No default image, initialize with black
-                  unsigned char* data = imageData._imageDestination->_image->data();
-                  unsigned int totalSize = imageData._imageDestination->_image->getTotalSizeInBytesIncludingMipmaps();
-                  for (unsigned int i = 0; i < totalSize; ++i)
-                  {
-                    *(data++) = 0;
-                  }
+                    // No default image, initialize with black
+                    unsigned char* data = imageData._imageDestination->_image->data();
+                    unsigned int totalSize = imageData._imageDestination->_image->getTotalSizeInBytesIncludingMipmaps();
+                    for (unsigned int i = 0; i < totalSize; ++i)
+                    {
+                        *(data++) = 0;
+                    }
                 }
             }
         }
@@ -1413,11 +1413,11 @@ void DestinationTile::optimizeResolution(const bool &forceLowres)
             unsigned int numRows = minimumSize;
             
             if (!forceLowres) {
-              // Rather use previously saved size than default 8x8, to avoid t-vertices
-              if (_terrain->_dataSet->_flatNumCols != 0)
-                numColumns = _terrain->_dataSet->_flatNumCols;
-              if (_terrain->_dataSet->_flatNumRows != 0)
-                numRows = _terrain->_dataSet->_flatNumRows;
+                // Rather use previously saved size than default 8x8, to avoid t-vertices
+                if (_terrain->_dataSet->_flatNumCols != 0)
+                    numColumns = _terrain->_dataSet->_flatNumCols;
+                if (_terrain->_dataSet->_flatNumRows != 0)
+                    numRows = _terrain->_dataSet->_flatNumRows;
             }
 
             float ratio_y_over_x = (_extents.yMax()-_extents.yMin())/(_extents.xMax()-_extents.xMin());
@@ -1795,7 +1795,7 @@ osg::StateSet* DestinationTile::createStateSet()
     }
 
     if(_dataSet->getCompressionMethod() == vpb::BuildOptions::GL_DRIVER) {
-      _dataSet->getState()->checkGLErrors("DestinationTile::createStateSet()");
+        _dataSet->getState()->checkGLErrors("DestinationTile::createStateSet()");
     }
 
     return _stateset.get();
@@ -1807,20 +1807,20 @@ osg::StateSet* DestinationTile::createDefaultGeometryAndStateSet(osg::Geometry *
     _stateset->setTextureAttributeAndModes(0, _defaultTexture, osg::StateAttribute::ON);
     osg::Array *array = geometry->getVertexArray();
     if (array) {
-      double defaultWidth = _defaultTexture->getImage()->s() * _defaultTextureResolution;
-      double defaultHeight = _defaultTexture->getImage()->t() * _defaultTextureResolution;
-      osg::Vec2 offset(fmod(_extents.xMin(), defaultWidth), fmod(_extents.yMin(), defaultHeight));
-      osg::Vec2 size(_extents.xMax() - _extents.xMin(), _extents.yMax() - _extents.yMin());
-      osg::Vec2 localLowerLeft = osg::Vec2(_extents.xMin() - _localToWorld(3, 0), _extents.yMin() -  _localToWorld(3, 1));
-      osg::Vec3Array *vertices = dynamic_cast<osg::Vec3Array *>(array);
-      osg::Vec2Array *textureCoords = new osg::Vec2Array();
-      for (osg::Vec3Array::iterator iter = vertices->begin(); iter != vertices->end(); ++iter) {
-        textureCoords->push_back(osg::Vec2(
-          (iter->x() - localLowerLeft.x() + offset.x()) / defaultWidth,
-          (iter->y() - localLowerLeft.y() + offset.y()) / defaultHeight
-        ));
-      }
-      geometry->setTexCoordArray(0, textureCoords);
+        double defaultWidth = _defaultTexture->getImage()->s() * _defaultTextureResolution;
+        double defaultHeight = _defaultTexture->getImage()->t() * _defaultTextureResolution;
+        osg::Vec2 offset(fmod(_extents.xMin(), defaultWidth), fmod(_extents.yMin(), defaultHeight));
+        osg::Vec2 size(_extents.xMax() - _extents.xMin(), _extents.yMax() - _extents.yMin());
+        osg::Vec2 localLowerLeft = osg::Vec2(_extents.xMin() - _localToWorld(3, 0), _extents.yMin() -  _localToWorld(3, 1));
+        osg::Vec3Array *vertices = dynamic_cast<osg::Vec3Array *>(array);
+        osg::Vec2Array *textureCoords = new osg::Vec2Array();
+        for (osg::Vec3Array::iterator iter = vertices->begin(); iter != vertices->end(); ++iter) {
+            textureCoords->push_back(osg::Vec2(
+                (iter->x() - localLowerLeft.x() + offset.x()) / defaultWidth,
+                (iter->y() - localLowerLeft.y() + offset.y()) / defaultHeight
+            ));
+        }
+        geometry->setTexCoordArray(0, textureCoords);
     }
     return _stateset;
 }
@@ -2286,9 +2286,9 @@ osg::Node* DestinationTile::createPolygonal()
 
         // Save size for any flat raster created, to avoid default 8x8, to avoid t-vertices
         if (_terrain->_dataSet->_flatNumCols == 0)
-          _terrain->_dataSet->_flatNumCols = numColumns;
+            _terrain->_dataSet->_flatNumCols = numColumns;
         if (_terrain->_dataSet->_flatNumRows == 0)
-          _terrain->_dataSet->_flatNumRows = numRows;
+            _terrain->_dataSet->_flatNumRows = numRows;
 
         _terrain->_heightField = grid;
     }
@@ -2395,43 +2395,53 @@ osg::Node* DestinationTile::createPolygonal()
         skirtVector.set(0.0f,0.0f,-skirtLength);
     }
     
-    double maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
-    unsigned int batchSize = _dataSet->getBatchSize();
-    float batchMaxDist2 = _dataSet->getBatchMaxDist2();
-    if (batchMaxDist2 == 0.0f) {
-        batchMaxDist2 = (3.0f * grid->getXInterval()) * (3.0f * grid->getYInterval());
-    }
-
-    // Simplify border vertices
+    bool delaunaySucceeded = false;
+    double maximumError = 0.0;
+    double currentError = FLT_MAX;
+    osg::ref_ptr<osg::Vec3Array> triangulatedVertices;
     std::vector<unsigned int> simplifiedBottomColumns;
     std::vector<unsigned int> simplifiedRightRows;
     std::vector<unsigned int> simplifiedTopRows;
     std::vector<unsigned int> simplifiedLeftRows;
-    if (maximumError > 0.0) {
-      RamerDouglasPeucker::simplifyBorderVertices(
-        grid, numColumns, numRows,
-        simplifiedBottomColumns, simplifiedRightRows,
-        simplifiedTopRows, simplifiedLeftRows,
-        static_cast<float>(maximumError / 2.0)
-      );
+    unsigned int batchSize;
+    float batchMaxDist2;
 
-      // Make sure it's not too sparse (would cause normal shading problems) by ensuring max 1/5 of the distance between points
-      densifyBorderIndices(simplifiedBottomColumns, numColumns, 5);
-      densifyBorderIndices(simplifiedRightRows, numRows, 5);
-      densifyBorderIndices(simplifiedTopRows, numColumns, 5);
-      densifyBorderIndices(simplifiedLeftRows, numRows, 5);
+    bool regular = _dataSet->getRegular();
+    if (!regular) {
+        maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
+        batchSize = _dataSet->getBatchSize();
+        batchMaxDist2 = _dataSet->getBatchMaxDist2();
+        if (batchMaxDist2 == 0.0f) {
+            batchMaxDist2 = (3.0f * grid->getXInterval()) * (3.0f * grid->getYInterval());
+        }
+
+        // Simplify border vertices
+        if (maximumError > 0.0) {
+            RamerDouglasPeucker::simplifyBorderVertices(
+                grid, numColumns, numRows,
+                simplifiedBottomColumns, simplifiedRightRows,
+                simplifiedTopRows, simplifiedLeftRows,
+                static_cast<float>(maximumError / 2.0)
+            );
+
+            // Make sure it's not too sparse (would cause normal shading problems) by ensuring max 1/5 of the distance between points
+            densifyBorderIndices(simplifiedBottomColumns, numColumns, 5);
+            densifyBorderIndices(simplifiedRightRows, numRows, 5);
+            densifyBorderIndices(simplifiedTopRows, numColumns, 5);
+            densifyBorderIndices(simplifiedLeftRows, numRows, 5);
+        }
     }
 
-    unsigned int vi=0;
-    unsigned int r,c;
-    
+    unsigned int vi = 0;
+    unsigned int r, c;
+
     // populate the vertex/normal/texcoord arrays from the grid.
     double orig_X = _extents.xMin();
     double orig_Y = _extents.yMin();
     double orig_Z = 0.0;
 
-    double delta_X = double(_extents.xMax()-_extents.xMin())/double(numColumns-1);
-    double delta_Y = double(_extents.yMax()-_extents.yMin())/double(numRows-1);
+    double delta_X = double(_extents.xMax() - _extents.xMin()) / double(numColumns - 1);
+    double delta_Y = double(_extents.yMax() - _extents.yMin()) / double(numRows - 1);
 
     float min_dot_product = 1.0f;
     float max_cluster_culling_height = 0.0f;
@@ -2449,29 +2459,15 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<float> leftBorderHeights;
     std::vector<float> rightBorderHeights;
 
-    // TEMP
-    /*
-    std::ofstream debugStream;
-    if (_level == 3 && _tileX == 1 && _tileY == 0) {
-        debugStream.open("C:\\tmp\\debug.lua", std::ios::out);
-        debugStream << "remo.selectAll(\"HEADER\")" << std::endl;
-        debugStream << "remo.setAttributes(\"RGB Mode\", true)" << std::endl;
-        debugStream << "remo.newModel(\"C:\\\\tmp\\\\debug2.flt\")" << std::endl << std::endl;
-        debugStream << "remo.selectByName(remo.create(\"GROUP\"))" << std::endl;
-        debugStream << "remo.setAttributes(\"Name\", \"all\")" << std::endl;
-        debugStream << "remo.setParent()" << std::endl;
-    }
-    */
-
-    for(r=0;r<numRows;++r)
+    for (r = 0; r < numRows; ++r)
     {
-        for(c=0;c<numColumns;++c)
+        for (c = 0; c < numColumns; ++c)
         {
             //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
-            double X = orig_X + delta_X*(double)c;
-            double Y = orig_Y + delta_Y*(double)r;
-            double Z = orig_Z + grid->getHeight(c,r);
+            double X = orig_X + delta_X * (double)c;
+            double Y = orig_Y + delta_Y * (double)r;
+            double Z = orig_Z + grid->getHeight(c, r);
             if (std::isnan(Z))
                 Z = 0.0;
 
@@ -2482,8 +2478,8 @@ osg::Node* DestinationTile::createPolygonal()
 
             if (mapLatLongsToXYZ)
             {
-                et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y),osg::DegreesToRadians(X),Z,
-                                             X,Y,Z);
+                et->convertLatLongHeightToXYZ(osg::DegreesToRadians(Y), osg::DegreesToRadians(X), Z,
+                X, Y, Z);
             }
 
             //addDebugTime("convertLatLongHeightToXYZ", startTime);
@@ -2492,13 +2488,6 @@ osg::Node* DestinationTile::createPolygonal()
             osg::Vec3d pos(X, Y, Z);
             if (useLocalToTileTransform)
                 pos = computeLocalPosition(_worldToLocal, pos);
-
-            // TEMP
-            /*
-            if (_level == 3 && _tileX == 1 && _tileY == 0) {
-                debugStream << "remo.createLightPoint(false, " << pos.x() << ", " << pos.y() << ", " << pos.z() << ")" << std::endl;
-            }
-            */
 
             //addDebugTime("computeLocalPosition", startTime);
             //startTime = osg::Timer::instance()->tick();
@@ -2513,13 +2502,13 @@ osg::Node* DestinationTile::createPolygonal()
 
                 // Skip already simplified border vertices
                 if (r == 0 && !simplifiedBottomColumns.empty() && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
-                  continue;
+                    continue;
                 if (r == numRows - 1 && !simplifiedTopRows.empty() && std::find(simplifiedTopRows.begin(), simplifiedTopRows.end(), c) == simplifiedTopRows.end())
-                  continue;
+                    continue;
                 if (c == 0 && !simplifiedLeftRows.empty() && std::find(simplifiedLeftRows.begin(), simplifiedLeftRows.end(), r) == simplifiedLeftRows.end())
-                  continue;
+                    continue;
                 if (c == numColumns - 1 && !simplifiedRightRows.empty() && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
-                  continue;
+                    continue;
 
                 //addDebugTime("skip borders", startTime);
                 //startTime = osg::Timer::instance()->tick();
@@ -2566,20 +2555,20 @@ osg::Node* DestinationTile::createPolygonal()
 
                 osg::Vec3 dv = v[vi] - center_position;
                 double d = sqrt(dv.x()*dv.x() + dv.y()*dv.y() + dv.z()*dv.z());
-                double theta = acos( globe_radius/ (globe_radius + fabs(height)) );
-                double phi = 2.0 * asin (d*0.5/globe_radius); // d/globe_radius;
-                double beta = theta+phi;
+                double theta = acos(globe_radius / (globe_radius + fabs(height)));
+                double phi = 2.0 * asin(d*0.5 / globe_radius); // d/globe_radius;
+                double beta = theta + phi;
                 double cutoff = osg::PI_2 - 0.1;
                 //log(osg::INFO,"theta="<<theta<<"\tphi="<<phi<<" beta "<<beta);
-                if (phi<cutoff && beta<cutoff)
+                if (phi < cutoff && beta < cutoff)
                 {
 
                     float local_dot_product = -sin(theta + phi);
-                    float local_m = globe_radius*( 1.0/ cos(theta+phi) - 1.0);
+                    float local_m = globe_radius * (1.0 / cos(theta + phi) - 1.0);
                     float local_radius = static_cast<float>(globe_radius * tan(beta)); // beta*globe_radius;
                     min_dot_product = osg::minimum(min_dot_product, local_dot_product);
-                    max_cluster_culling_height = osg::maximum(max_cluster_culling_height,local_m);
-                    max_cluster_culling_radius = osg::maximum(max_cluster_culling_radius,local_radius);
+                    max_cluster_culling_height = osg::maximum(max_cluster_culling_height, local_m);
+                    max_cluster_culling_radius = osg::maximum(max_cluster_culling_radius, local_radius);
                 }
                 else
                 {
@@ -2587,14 +2576,14 @@ osg::Node* DestinationTile::createPolygonal()
                     useClusterCullingCallback = false;
                 }
 
-                //addDebugTime("cluster", startTime);
+            //addDebugTime("cluster", startTime);
             }
 
             //t[vi].x() = (c==numColumns-1)? 1.0f : (float)(c)/(float)(numColumns-1);
             //t[vi].y() = (r==numRows-1)? 1.0f : (float)(r)/(float)(numRows-1);
 
             ++vi;
-            
+
         }
     }
     
@@ -2602,8 +2591,8 @@ osg::Node* DestinationTile::createPolygonal()
 
     // Resize to number of vertices after border simplifcation
     if (vi < numVertices) {
-      numVertices = vi;
-      (&v)->resize(numVertices);
+        numVertices = vi;
+        (&v)->resize(numVertices);
     }
 
     //addDebugTime("resize", startTime);
@@ -2611,8 +2600,8 @@ osg::Node* DestinationTile::createPolygonal()
 
     osg::StateSet* stateset = createStateSet();
     if (!stateset && _defaultTexture.valid()) {
-      // Completely non-filled but we have default image, repeat it correctly
-      stateset = createDefaultGeometryAndStateSet(geometry);
+        // Completely non-filled but we have default image, repeat it correctly
+        stateset = createDefaultGeometryAndStateSet(geometry);
     }
 
     if (stateset)
@@ -2623,228 +2612,183 @@ osg::Node* DestinationTile::createPolygonal()
     //addDebugTime("stateset", startTime);
     //startTime = osg::Timer::instance()->tick();
 
-    // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
-    std::reverse(topBorderVertices.begin(), topBorderVertices.end());
-    std::reverse(leftBorderVertices.begin(), leftBorderVertices.end());
-    std::reverse(topBorderHeights.begin(), topBorderHeights.end());
-    std::reverse(leftBorderHeights.begin(), leftBorderHeights.end());
+    if (!regular) {
+        // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
+        std::reverse(topBorderVertices.begin(), topBorderVertices.end());
+        std::reverse(leftBorderVertices.begin(), leftBorderVertices.end());
+        std::reverse(topBorderHeights.begin(), topBorderHeights.end());
+        std::reverse(leftBorderHeights.begin(), leftBorderHeights.end());
 
-    // Create Delaunay constraints for borders
-    std::vector<CDT::V2d<float> > borderVertices;
-    borderVertices.insert(borderVertices.end(), bottomBorderVertices.begin(), bottomBorderVertices.end());
-    borderVertices.insert(borderVertices.end(), rightBorderVertices.begin(), rightBorderVertices.end());
-    borderVertices.insert(borderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
-    borderVertices.insert(borderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
-    CDT::EdgeVec constraintEdges;
-    for (CDT::VertInd i = 0; i < borderVertices.size() - 1; ++i) {
-        constraintEdges.push_back(CDT::Edge(i, i + 1));
-    }
-    constraintEdges.push_back(CDT::Edge(borderVertices.size() - 1, 0));
+        // Create Delaunay constraints for borders
+        std::vector<CDT::V2d<float> > borderVertices;
+        borderVertices.insert(borderVertices.end(), bottomBorderVertices.begin(), bottomBorderVertices.end());
+        borderVertices.insert(borderVertices.end(), rightBorderVertices.begin(), rightBorderVertices.end());
+        borderVertices.insert(borderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
+        borderVertices.insert(borderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
+        CDT::EdgeVec constraintEdges;
+        for (CDT::VertInd i = 0; i < borderVertices.size() - 1; ++i) {
+            constraintEdges.push_back(CDT::Edge(i, i + 1));
+        }
+        constraintEdges.push_back(CDT::Edge(borderVertices.size() - 1, 0));
 
-    //addDebugTime("constraints", startTime);
-    //startTime = osg::Timer::instance()->tick();
-
-    // Separate border heights, since CDT is 2D
-    std::vector<float> borderHeights;
-    borderHeights.insert(borderHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
-    borderHeights.insert(borderHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
-    borderHeights.insert(borderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
-    borderHeights.insert(borderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
-
-    //addDebugTime("border heights", startTime);
-    //startTime = osg::Timer::instance()->tick();
-
-    osg::ref_ptr<osg::Vec3Array> delaunayVertices = new osg::Vec3Array();
-
-    // Delaunay-triangulate tile with only borders and center point first, and add points until max error is fulfilled
-    // Just in case, set a maximum number of loops
-    std::vector<CDT::V2d<float> > cdtVertices; // 2D vertices excl. borders
-    std::vector<float> cdtHeights; // Heights excl. borders
-    double currentError = FLT_MAX;
-    bool delaunaySucceeded = false;
-    unsigned int loopNumber = 1;
-    unsigned int maxNumLoops = 100000;
-    unsigned int lastNumVertices = 0;
-    double lastError = -999.0;
-    unsigned int numEqual = 0;
-
-    //addDebugTime("prepare delaunay", startTime);
-
-    while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
+        //addDebugTime("constraints", startTime);
         //startTime = osg::Timer::instance()->tick();
 
-        // Now Delaunay-triangulate
-        delaunaySucceeded = true;
-        CDT::Triangulation<float> delaunayTriangulation;
-        try {
-          delaunayTriangulation.insertVertices(borderVertices);
-          delaunayTriangulation.insertVertices(cdtVertices);
-          delaunayTriangulation.insertEdges(constraintEdges);
-          delaunayTriangulation.eraseSuperTriangle();
-        }
-        catch (std::exception &ex) {
-            log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex.what());
-            delaunaySucceeded = false;
-            break;
-        }
-        catch (std::string ex) {
-            log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex);
-            delaunaySucceeded = false;
-            break;
-        }
-        catch (...) {
-            log(osg::WARN, "ERROR: Delaunay triangulation failed");
-            delaunaySucceeded = false;
-            break;
-        }
+        // Separate border heights, since CDT is 2D
+        std::vector<float> borderHeights;
+        borderHeights.insert(borderHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
 
-        //addDebugTime("delaunay", startTime);
+        //addDebugTime("border heights", startTime);
         //startTime = osg::Timer::instance()->tick();
 
-        // See if we got any triangles
-        if (delaunayTriangulation.triangles.empty()) {
-            delaunaySucceeded = false;
-            break;
-        }
+        triangulatedVertices = new osg::Vec3Array();
 
-        //addDebugTime("check empty", startTime);
-        //startTime = osg::Timer::instance()->tick();
+        // Delaunay-triangulate tile with only borders and center point first, and add points until max error is fulfilled
+        // Just in case, set a maximum number of loops
+        std::vector<CDT::V2d<float> > cdtVertices; // 2D vertices excl. borders
+        std::vector<float> cdtHeights; // Heights excl. borders
+        unsigned int loopNumber = 1;
+        unsigned int maxNumLoops = 100000;
+        unsigned int lastNumVertices = 0;
+        double lastError = -999.0;
+        unsigned int numEqual = 0;
 
-        // Translate to OSG
-        delaunayVertices->erase(delaunayVertices->begin(), delaunayVertices->end());
-        for (unsigned int i = 0; i < borderVertices.size(); ++i)
-            delaunayVertices->push_back(osg::Vec3(borderVertices[i].x, borderVertices[i].y, borderHeights[i]));
-        for (unsigned int i = 0; i < cdtVertices.size(); ++i)
-            delaunayVertices->push_back(osg::Vec3(cdtVertices[i].x, cdtVertices[i].y, cdtHeights[i]));
-        geometry->setVertexArray(delaunayVertices);
-        unsigned int numPrims = geometry->getNumPrimitiveSets();
-        if (numPrims > 0)
-            geometry->removePrimitiveSet(0, numPrims);
-        std::vector<GLuint> indices;
-        for (CDT::TriangleVec::iterator it = delaunayTriangulation.triangles.begin(); it != delaunayTriangulation.triangles.end(); ++it) {
-            indices.push_back(it->vertices[0]);
-            indices.push_back(it->vertices[1]);
-            indices.push_back(it->vertices[2]);
-        }
-        geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
+        //addDebugTime("prepare delaunay", startTime);
 
-        //addDebugTime("translate to OSG", startTime);
-        //startTime = osg::Timer::instance()->tick();
-
-        // Prepare height field bbox
-        osg::BoundingBox heightFieldBbox(
-          grid->getOrigin(),
-          grid->getOrigin() + osg::Vec3(
-            grid->getXInterval() * grid->getNumColumns(),
-            grid->getYInterval() * grid->getNumRows(),
-            0.0f
-          )
-        );
-        if (useLocalToTileTransform) {
-          heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldBbox._min);
-          heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldBbox._max);
-        }
-
-        //addDebugTime("height field bbox", startTime);
-        //startTime = osg::Timer::instance()->tick();
-
-        // Find batchSize most differing points
-        WorstPointsFinder worstPointFinder(delaunayTriangulation, borderHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
-        std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
-
-        if (!worstPointsPerError.empty()) {
+        while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
             //startTime = osg::Timer::instance()->tick();
 
-            for (std::map<float, osg::Vec3>::iterator it = worstPointsPerError.begin(); it != worstPointsPerError.end(); ++it) {
-                cdtVertices.push_back(CDT::V2d<float>(it->second.x(), it->second.y()));
-                cdtHeights.push_back(it->second.z());
+            // Now Delaunay-triangulate
+            delaunaySucceeded = true;
+            CDT::Triangulation<float> delaunayTriangulation;
+            try {
+                delaunayTriangulation.insertVertices(borderVertices);
+                delaunayTriangulation.insertVertices(cdtVertices);
+                delaunayTriangulation.insertEdges(constraintEdges);
+                delaunayTriangulation.eraseSuperTriangle();
+            }
+            catch (std::exception &ex) {
+                log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex.what());
+                delaunaySucceeded = false;
+                break;
+            }
+            catch (std::string ex) {
+                log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex);
+                delaunaySucceeded = false;
+                break;
+            }
+            catch (...) {
+                log(osg::WARN, "ERROR: Delaunay triangulation failed");
+                delaunaySucceeded = false;
+                break;
             }
 
-            currentError = worstPointsPerError.rbegin()->first;
-
-            //addDebugTime("add new vertices and heights", startTime);
+            //addDebugTime("delaunay", startTime);
             //startTime = osg::Timer::instance()->tick();
 
-            // Pragmatic avoidance of infinite loop
-            // (seems to be a bug in DelaunayTriangulator causing t-vertices with cracks somehow,
-            //  resulting in the addition of the same point over and over again)
-            if (currentError == lastError && delaunayVertices->size() == lastNumVertices) {
-                ++numEqual;
-                if (numEqual > 10) {
-                    // Bail out after 10 equal results
-                    log(osg::WARN, "WARNING: Give up after repeated error %f and %d triangles", currentError, delaunayVertices->size());
-                    break;
+            // See if we got any triangles
+            if (delaunayTriangulation.triangles.empty()) {
+                delaunaySucceeded = false;
+                break;
+            }
+
+            //addDebugTime("check empty", startTime);
+            //startTime = osg::Timer::instance()->tick();
+
+            // Translate to OSG
+            triangulatedVertices->erase(triangulatedVertices->begin(), triangulatedVertices->end());
+            for (unsigned int i = 0; i < borderVertices.size(); ++i)
+                triangulatedVertices->push_back(osg::Vec3(borderVertices[i].x, borderVertices[i].y, borderHeights[i]));
+            for (unsigned int i = 0; i < cdtVertices.size(); ++i)
+                triangulatedVertices->push_back(osg::Vec3(cdtVertices[i].x, cdtVertices[i].y, cdtHeights[i]));
+            geometry->setVertexArray(triangulatedVertices);
+            unsigned int numPrims = geometry->getNumPrimitiveSets();
+            if (numPrims > 0)
+                geometry->removePrimitiveSet(0, numPrims);
+            std::vector<GLuint> indices;
+            for (CDT::TriangleVec::iterator it = delaunayTriangulation.triangles.begin(); it != delaunayTriangulation.triangles.end(); ++it) {
+                indices.push_back(it->vertices[0]);
+                indices.push_back(it->vertices[1]);
+                indices.push_back(it->vertices[2]);
+            }
+            geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
+
+            //addDebugTime("translate to OSG", startTime);
+            //startTime = osg::Timer::instance()->tick();
+
+            // Prepare height field bbox
+            osg::BoundingBox heightFieldBbox(
+                grid->getOrigin(),
+                grid->getOrigin() + osg::Vec3(
+                grid->getXInterval() * grid->getNumColumns(),
+                grid->getYInterval() * grid->getNumRows(),
+                0.0f
+                )
+            );
+            if (useLocalToTileTransform) {
+                heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldBbox._min);
+                heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldBbox._max);
+            }
+
+            //addDebugTime("height field bbox", startTime);
+            //startTime = osg::Timer::instance()->tick();
+
+            // Find batchSize most differing points
+            WorstPointsFinder worstPointFinder(delaunayTriangulation, borderHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
+            std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
+
+            if (!worstPointsPerError.empty()) {
+                //startTime = osg::Timer::instance()->tick();
+
+                for (std::map<float, osg::Vec3>::iterator it = worstPointsPerError.begin(); it != worstPointsPerError.end(); ++it) {
+                    cdtVertices.push_back(CDT::V2d<float>(it->second.x(), it->second.y()));
+                    cdtHeights.push_back(it->second.z());
                 }
+
+                currentError = worstPointsPerError.rbegin()->first;
+
+                //addDebugTime("add new vertices and heights", startTime);
+                //startTime = osg::Timer::instance()->tick();
+
+                // Pragmatic avoidance of infinite loop
+                // (seems to be a bug in DelaunayTriangulator causing t-vertices with cracks somehow,
+                //  resulting in the addition of the same point over and over again)
+                if (currentError == lastError && triangulatedVertices->size() == lastNumVertices) {
+                    ++numEqual;
+                    if (numEqual > 10) {
+                        // Bail out after 10 equal results
+                        log(osg::WARN, "WARNING: Give up after repeated error %f and %d triangles", currentError, triangulatedVertices->size());
+                        break;
+                    }
+                }
+                else {
+                    numEqual = 0;
+                }
+                lastError = currentError;
+                lastNumVertices = triangulatedVertices->size();
+
+                //addDebugTime("pragmatic avoidance of infinite loop", startTime);
             }
             else {
-                numEqual = 0;
+                break;
             }
-            lastError = currentError;
-            lastNumVertices = delaunayVertices->size();
-
-            //addDebugTime("pragmatic avoidance of infinite loop", startTime);
+            ++loopNumber;
         }
-        else {
-            // TEMP
-            /*
-            if (_level == 3 && _tileX == 1 && _tileY == 0) {
-                debugStream << std::endl << "remo.setCurrentColorRGB(255,0,0)" << std::endl;
-                debugStream << "remo.selectAll(\"HEADER\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"border\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                for (unsigned int i = 0; i < borderVertices.size(); ++i) {
-                    CDT::V2d<float> borderVertex = borderVertices[i];
-                    float borderHeight = borderHeights[i];
-                    //debugStream << "borderVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
-                    debugStream << "remo.createLightPoint(false, " << borderVertex.x << ", " << borderVertex.y << ", " << borderHeight << ")" << std::endl;
-                }
-
-                //debugStream << "std::vector<CDT::V2d<float> > cdtVertices;" << std::endl;
-                debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"inner\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                for (unsigned int i = 0; i < cdtVertices.size(); ++i) {
-                    CDT::V2d<float> cdtVertex = cdtVertices[i];
-                    float cdtHeight = cdtHeights[i];
-                    //debugStream << "borderVertices.push_back(CDT::V2d<float>(" << itr->x << ", " << itr->y << "))" << std::endl;
-                    debugStream << "remo.createLightPoint(false, " << cdtVertex.x << ", " << cdtVertex.y << ", " << cdtHeight << ")" << std::endl;
-                }
-
-                //debugStream << "CDT::EdgeVec constraintEdges;" << std::endl;
-                debugStream << std::endl << "remo.selectAll(\"HEADER\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                debugStream << "remo.selectByName(remo.create(\"OBJECT\"))" << std::endl;
-                debugStream << "remo.setAttributes(\"Name\", \"constraints\")" << std::endl;
-                debugStream << "remo.setParent()" << std::endl;
-                for (CDT::EdgeVec::iterator itr = constraintEdges.begin(); itr != constraintEdges.end(); ++itr) {
-                    //debugStream << "constraintEdges.push_back(CDT::Edge(" << itr->v1() << ", " << itr->v2() << "))" << std::endl;
-                    debugStream << "remo.createPolygon(";
-                    debugStream << borderVertices[itr->v1()].x << "," << borderVertices[itr->v1()].y << "," << borderHeights[itr->v1()] << ", ";
-                    debugStream << borderVertices[itr->v2()].x << "," << borderVertices[itr->v2()].y << "," << borderHeights[itr->v2()] << ")" << std::endl;
-                }
-                debugStream << std::endl << "remo.saveModel()" << std::endl;
-                debugStream.close();
-            }
-            */
-            break;
+        if (delaunaySucceeded) {
+            log(osg::NOTICE, "Level %d tile %d,%d: %d incremental Delaunay loops", _level, _tileX, _tileY, loopNumber);
         }
-        ++loopNumber;
-    }
-    if (delaunaySucceeded) {
-        log(osg::NOTICE, "Level %d tile %d,%d: %d incremental Delaunay loops", _level, _tileX, _tileY, loopNumber);
     }
 
     if (!delaunaySucceeded) {
         // Failed or skipped delaunay, fallback to regular mesh
         if (maximumError > 0.0)
-          std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, gave up at error " << currentError << " / max " << maximumError << ". Fallback to regular mesh!" << std::endl;
+            std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, gave up at error " << currentError << " / max " << maximumError << ". Fallback to regular mesh!" << std::endl;
 
-        delaunayVertices = origVertices;
-        geometry->setVertexArray(delaunayVertices);
+        triangulatedVertices = origVertices;
+        geometry->setVertexArray(triangulatedVertices);
         osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
         geometry->addPrimitiveSet(&drawElements);
         int ei=0;
@@ -2857,8 +2801,8 @@ osg::Node* DestinationTile::createPolygonal()
                 unsigned int i01 = (r+1)*numColumns+c;
                 unsigned int i11 = (r+1)*numColumns+c+1;
 
-                float diff_00_11 = fabsf((*delaunayVertices)[i00].z()-(*delaunayVertices)[i11].z());
-                float diff_01_10 = fabsf((*delaunayVertices)[i01].z()-(*delaunayVertices)[i10].z());
+                float diff_00_11 = fabsf((*triangulatedVertices)[i00].z()-(*triangulatedVertices)[i11].z());
+                float diff_01_10 = fabsf((*triangulatedVertices)[i01].z()-(*triangulatedVertices)[i10].z());
                 if (diff_00_11<diff_01_10)
                 {
                     // diagonal between 00 and 11
@@ -2904,8 +2848,8 @@ osg::Node* DestinationTile::createPolygonal()
     unsigned int i = 0;
     unsigned int j = 0;
     unsigned int heightDeltaIndex = 0;
-    for (vi = 0; vi < delaunayVertices->size(); ++vi) {
-        osg::Vec3 pos = (*delaunayVertices)[vi];
+    for (vi = 0; vi < triangulatedVertices->size(); ++vi) {
+        osg::Vec3 pos = (*triangulatedVertices)[vi];
         t->push_back(osg::Vec2((pos.x() - bbox.xMin()) / bboxWidth, (pos.y() - bbox.yMin()) / bboxHeight));
         unsigned int position = NUMBER_OF_POSITIONS;
         if (pos.x() == bbox.xMin()) {

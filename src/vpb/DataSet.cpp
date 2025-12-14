@@ -66,6 +66,7 @@ void DataSet::init()
     _flatNumCols = 0;
     _flatNumRows = 0;
 
+    _regular = false;
     _maximumError = 0.0;
     _batchSize = 1;
     _batchMaxDist2 = 0.0f;
@@ -77,6 +78,11 @@ void DataSet::init()
 
     _newDestinationGraph = false;
 
+}
+
+void DataSet::setRegular(const bool &regular)
+{
+  _regular = regular;
 }
 
 void DataSet::setMaximumError(const double &maximumError)
