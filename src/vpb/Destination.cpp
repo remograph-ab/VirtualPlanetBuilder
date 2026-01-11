@@ -39,6 +39,8 @@
 
 using namespace vpb;
 
+#define BATCH_SIZE_FACTOR 0.002
+#define BATCH_MAX_DIST_WIDTH_FACTOR 0.1f
 
 #define SHIFT_RASTER_BY_HALF_CELL
 
@@ -2410,9 +2412,14 @@ osg::Node* DestinationTile::createPolygonal()
     if (!regular) {
         maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
         batchSize = _dataSet->getBatchSize();
+        if (batchSize == 0) {
+          batchSize = grid->getNumColumns() * grid->getNumRows() * BATCH_SIZE_FACTOR;
+        }
         batchMaxDist2 = _dataSet->getBatchMaxDist2();
         if (batchMaxDist2 == 0.0f) {
-            batchMaxDist2 = (3.0f * grid->getXInterval()) * (3.0f * grid->getYInterval());
+            float tileWidth = grid->getNumColumns() * grid->getXInterval();
+            float tileHeight = grid->getNumRows() * grid->getYInterval();
+            batchMaxDist2 = tileWidth * BATCH_MAX_DIST_WIDTH_FACTOR * tileHeight * BATCH_MAX_DIST_WIDTH_FACTOR;
         }
 
         // Simplify border vertices
