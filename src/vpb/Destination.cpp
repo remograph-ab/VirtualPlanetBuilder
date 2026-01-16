@@ -2413,7 +2413,7 @@ osg::Node* DestinationTile::createPolygonal()
         maximumError = _dataSet->getMaximumError() * pow(2.0, _dataSet->getMaximumNumOfLevels() - _level - 1);
         batchSize = _dataSet->getBatchSize();
         if (batchSize == 0) {
-          batchSize = grid->getNumColumns() * grid->getNumRows() * BATCH_SIZE_FACTOR;
+          batchSize = std::max<unsigned int>(1, grid->getNumColumns() * grid->getNumRows() * BATCH_SIZE_FACTOR);
         }
         batchMaxDist2 = _dataSet->getBatchMaxDist2();
         if (batchMaxDist2 == 0.0f) {
