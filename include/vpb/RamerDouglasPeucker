@@ -17,7 +17,7 @@ public:
 
 private:
   static void simplifyHeights(const std::vector<float>& heights, const float& delta, const float& maxDiff, std::vector<unsigned int> &decimatedIndices);
-  static void rdpRecursive(const std::vector<float>& heights, const float &delta, const float &maxDiff, const unsigned int &startIdx, const unsigned int &endIdx, std::vector<unsigned int> &outIndices);
+  static void rdpIterative(const std::vector<float>& heights, const float &delta, const float &maxDiff, std::vector<unsigned int> &outIndices);
   static float perpendicularDistance(const unsigned int &index, const unsigned int &startIdx, const unsigned int &endIdx, const float &height, const float &startHeight, const float &endHeight, const float &delta);
 };
 

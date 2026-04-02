@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <set>
+#include <stack>
 
 #include <vpb/RamerDouglasPeucker>
 
@@ -45,40 +47,61 @@ void RamerDouglasPeucker::simplifyHeights(const std::vector<float>& heights, con
     if (heights.size() < 2)
         return;
 
-    // Run RDP recursively and collect indices
-    rdpRecursive(heights, delta, maxDiff, 0, static_cast<unsigned int>(heights.size() - 1), decimatedIndices);
+    // Run RDP iteratively and collect indices
+    rdpIterative(heights, delta, maxDiff, decimatedIndices);
 
     // Sort indices to maintain original order
     std::sort(decimatedIndices.begin(), decimatedIndices.end());
 }
 
-void RamerDouglasPeucker::rdpRecursive(
-    const std::vector<float>& heights, const float &delta, const float &maxDiff,
-    const unsigned int &startIdx, const unsigned int &endIdx, std::vector<unsigned int> &outIndices
+void RamerDouglasPeucker::rdpIterative(
+  const std::vector<float>& heights, const float &delta, const float &maxDiff,
+  std::vector<unsigned int> &outIndices
 )
 {
+  struct Segment { unsigned int start; unsigned int end; };
+  std::stack<Segment> segmentStack;
+
+  segmentStack.push({ 0, static_cast<unsigned int>(heights.size() - 1) });
+  std::set<unsigned int> markedIndices;
+
+  while (!segmentStack.empty()) {
+    Segment current = segmentStack.top();
+    segmentStack.pop();
+
     float maxDistance = 0.0f;
     int indexFurthest = -1;
-    for (unsigned int i = startIdx + 1; i <= endIdx; ++i) {
-        float dist = perpendicularDistance(i, startIdx, endIdx, heights[i], heights[startIdx], heights[endIdx], delta);
-        if (dist > maxDistance) {
-            maxDistance = dist;
-            indexFurthest = i;
-        }
+
+    // Find furthest point
+    for (unsigned int i = current.start + 1; i < current.end; ++i) {
+      float dist = perpendicularDistance(
+        i, current.start, current.end,
+        heights[i], heights[current.start], heights[current.end], delta
+      );
+      if (dist > maxDistance) {
+        maxDistance = dist;
+        indexFurthest = i;
+      }
     }
 
     if (maxDistance > maxDiff && indexFurthest > -1) {
-        // Recursive simplification
-        rdpRecursive(heights, delta, maxDiff, startIdx, static_cast<unsigned int>(indexFurthest), outIndices);
-        rdpRecursive(heights, delta, maxDiff, static_cast<unsigned int>(indexFurthest), endIdx, outIndices);
+      // Push segments to process (in reverse order for correct processing)
+      segmentStack.push({ static_cast<unsigned int>(indexFurthest), current.end });
+      segmentStack.push({ current.start, static_cast<unsigned int>(indexFurthest) });
     }
     else {
-        // Keep start and end indices (startIdx added in parent call)
-        if (std::find(outIndices.begin(), outIndices.end(), startIdx) == outIndices.end())
-            outIndices.push_back(startIdx);
-        if (std::find(outIndices.begin(), outIndices.end(), endIdx) == outIndices.end())
-            outIndices.push_back(endIdx);
+      // Mark endpoints as kept
+      markedIndices.insert(current.start);
+      markedIndices.insert(current.end);
     }
+  }
+
+  // Convert set to vector, maintaining order
+  for (unsigned int i = 0; i < heights.size(); ++i) {
+    if (markedIndices.count(i)) {
+      outIndices.push_back(i);
+    }
+  }
 }
 
 float RamerDouglasPeucker::perpendicularDistance(
