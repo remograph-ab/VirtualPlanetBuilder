@@ -40,7 +40,8 @@ class VPB_EXPORT Commandline
         {
             ADD,
             REMOVE,
-            MODIFIED
+            MODIFIED,
+			CONSTRAINT
         };
 
         void processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp);

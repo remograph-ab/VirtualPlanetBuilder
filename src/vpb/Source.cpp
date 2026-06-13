@@ -650,15 +650,15 @@ public:
 
         char* source_projection_string = strdup(sourceCS->getCoordinateSystem().c_str());
         char* importString = source_projection_string;
-        OGRSpatialReference* sourceProjection = new OGRSpatialReference;
-        sourceProjection->importFromWkt(&importString);
+        OGRSpatialReferenceH sourceProjection = OSRNewSpatialReference(NULL);
+        OSRImportFromWkt(sourceProjection, &importString);
 
         char* destination_projection_string = strdup(destinationCS->getCoordinateSystem().c_str());
         importString = destination_projection_string;
-        OGRSpatialReference* destinationProjection = new OGRSpatialReference;
-        destinationProjection->importFromWkt(&importString);
+        OGRSpatialReferenceH destinationProjection = OSRNewSpatialReference(NULL);
+        OSRImportFromWkt(destinationProjection, &importString);
 
-        OGRCoordinateTransformation* ct =  OGRCreateCoordinateTransformation( sourceProjection, destinationProjection );
+        OGRCoordinateTransformation* ct =  OGRCreateCoordinateTransformation((OGRSpatialReference*)sourceProjection, (OGRSpatialReference*)destinationProjection );
 
         bool success = false;
 
@@ -666,11 +666,11 @@ public:
         {
             success = transform(ct);
 
-            delete ct;
+            OGRCoordinateTransformation::DestroyCT(ct);
         }
         
-        delete destinationProjection;
-        delete sourceProjection;
+        OSRDestroySpatialReference(destinationProjection);
+        OSRDestroySpatialReference(sourceProjection);
 
         free(destination_projection_string);
         free(source_projection_string);

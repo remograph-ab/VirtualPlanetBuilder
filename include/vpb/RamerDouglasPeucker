@@ -5,20 +5,23 @@
 
 #include <osg/Shape>
 
-class RamerDouglasPeucker
+namespace vpb
 {
-public:
-  static void simplifyBorderVertices(
-    osg::HeightField *grid, const unsigned int &numColumns, const unsigned int &numRows,
-    std::vector<unsigned int> &simplifiedBottomColumns, std::vector<unsigned int> &simplifiedRightRows,
-    std::vector<unsigned int> &simplifiedTopRows, std::vector<unsigned int> &simplifiedLeftRows,
-    const float &maximumError
-  );
+	class RamerDouglasPeucker
+	{
+	public:
+	  static void simplifyBorderVertices(
+		osg::HeightField *grid, const unsigned int &numColumns, const unsigned int &numRows,
+		std::vector<unsigned int> &simplifiedBottomColumns, std::vector<unsigned int> &simplifiedRightRows,
+		std::vector<unsigned int> &simplifiedTopRows, std::vector<unsigned int> &simplifiedLeftRows,
+		const float &maximumError
+	  );
 
-private:
-  static void simplifyHeights(const std::vector<float>& heights, const float& delta, const float& maxDiff, std::vector<unsigned int> &decimatedIndices);
-  static void rdpIterative(const std::vector<float>& heights, const float &delta, const float &maxDiff, std::vector<unsigned int> &outIndices);
-  static float perpendicularDistance(const unsigned int &index, const unsigned int &startIdx, const unsigned int &endIdx, const float &height, const float &startHeight, const float &endHeight, const float &delta);
-};
+	private:
+	  static void simplifyHeights(const std::vector<float>& heights, const float& delta, const float& maxDiff, std::vector<unsigned int> &decimatedIndices);
+	  static void rdpIterative(const std::vector<float>& heights, const float &delta, const float &maxDiff, std::vector<unsigned int> &outIndices);
+	  static float perpendicularDistance(const unsigned int &index, const unsigned int &startIdx, const unsigned int &endIdx, const float &height, const float &startHeight, const float &endHeight, const float &delta);
+	};
+}
 
 #endif // RAMER_DOUGLAS_PEUCKER_H

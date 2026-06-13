@@ -348,6 +348,7 @@ void Commandline::processShapeFile(vpb::Source::Type type, const std::string& fi
     options->setOptionString("double");
 
     osg::ref_ptr<osg::Node> model = osgDB::readNodeFile(filename, options.get());
+    model->setName(filename);
 
     if (model.valid())
     {
@@ -395,6 +396,24 @@ void Commandline::processShapeFile(vpb::Source::Type type, const std::string& fi
         model->setNodeMask(mask);
 
         model->addDescription(std::string("SHAPEFILE"));
+
+        switch (layerOp)
+        {
+        case ADD:
+            model->addDescription(std::string("ADD"));
+            break;
+        case REMOVE:
+            model->addDescription(std::string("REMOVE"));
+            break;
+        case MODIFIED:
+            model->addDescription(std::string("MODIFIED"));
+            break;
+        case CONSTRAINT:
+            model->addDescription(std::string("CONSTRAINT"));
+            break;
+        default:
+            break;
+        }
 
         if (!heightAttributeName.empty())
         {
@@ -1330,6 +1349,20 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             fout<<"--forest "<<filename<<std::endl;
             typeAttribute = "Forest";
             processFile(vpb::Source::SHAPEFILE, filename, currentLayerOperation);
+            reset();
+        }
+        else if (arguments.read(pos, "--outlines", filename))
+        {
+            fout<<"--outlines "<<filename<<std::endl;
+            osgDB::ifstream in(filename.c_str());
+            if (in) {
+                while (!in.eof()) {
+                    std::string outlineFilename;
+                    in >> outlineFilename;
+                    typeAttribute = "Outline";
+                    processFile(vpb::Source::SHAPEFILE, outlineFilename, LayerOperation::CONSTRAINT);
+                }
+            }
             reset();
         }
         else if (arguments.read(pos, "--sf",filename))

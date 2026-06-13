@@ -4,6 +4,8 @@
 
 #include <vpb/RamerDouglasPeucker>
 
+using namespace vpb;
+
 void RamerDouglasPeucker::simplifyBorderVertices(
     osg::HeightField *grid, const unsigned int &numColumns, const unsigned int &numRows,
     std::vector<unsigned int> &simplifiedBottomColumns, std::vector<unsigned int> &simplifiedRightRows,

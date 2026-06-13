@@ -2345,7 +2345,7 @@ bool DataSet::addTerrain(osgTerrain::TerrainTile* terrainTile, unsigned int revi
 
         osg::Node* model = terrainTile->getChild(ci);
 
-        osg::notify(osg::NOTICE)<<"Adding model"<<model->getName()<<std::endl;
+        osg::notify(osg::NOTICE)<<"Adding model "<<model->getName()<<std::endl;
 
         Source::Type type = vpb::Source::MODEL;
         for(unsigned di = 0; di< model->getNumDescriptions(); ++di)

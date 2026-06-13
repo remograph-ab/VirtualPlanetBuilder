@@ -6,6 +6,7 @@
 #include <osg/TriangleIndexFunctor>
 #include <osg/PrimitiveSet>
 
+using namespace vpb;
 
 #define TOLERANCE 0.001f
 #define CURTAIN_RATIO 0.03f

@@ -17,6 +17,8 @@
 #include <vpb/TextureUtils>
 #include <vpb/RamerDouglasPeucker>
 #include <vpb/CreateCurtainsVisitor>
+#include <vpb/CreateConstraintsVisitor>
+#include <vpb/SpatialUtils>
 
 #include <cdt/Triangulation.h>
 
@@ -91,7 +93,7 @@ class WorstPointsFinder
 public:
     WorstPointsFinder(
         const CDT::Triangulation<float> &triangulation,
-        const std::vector<float> &borderHeights,
+        const std::vector<float> &constraintHeights,
         const std::vector<float> &cdtHeights,
         osg::HeightField *heightField,
         const osg::BoundingBox &heightFieldBbox,
@@ -100,7 +102,7 @@ public:
         const float &batchMaxDist2
     )
         : _triangulation(triangulation)
-        , _borderHeights(borderHeights)
+        , _constraintHeights(constraintHeights)
         , _cdtHeights(cdtHeights)
         , _heightField(heightField)
         , _heightFieldBbox(heightFieldBbox)
@@ -138,9 +140,9 @@ public:
             //addDebugTime("getWorstPointPerError: address CDT", startTime);
             //startTime = osg::Timer::instance()->tick();
 
-            osg::Vec3 v1(v12d.x, v12d.y, i0 >= _borderHeights.size() ? _cdtHeights[i0 - _borderHeights.size()] : _borderHeights[i0]);
-            osg::Vec3 v2(v22d.x, v22d.y, i1 >= _borderHeights.size() ? _cdtHeights[i1 - _borderHeights.size()] : _borderHeights[i1]);
-            osg::Vec3 v3(v32d.x, v32d.y, i2 >= _borderHeights.size() ? _cdtHeights[i2 - _borderHeights.size()] : _borderHeights[i2]);
+            osg::Vec3 v1(v12d.x, v12d.y, i0 >= _constraintHeights.size() ? _cdtHeights[i0 - _constraintHeights.size()] : _constraintHeights[i0]);
+            osg::Vec3 v2(v22d.x, v22d.y, i1 >= _constraintHeights.size() ? _cdtHeights[i1 - _constraintHeights.size()] : _constraintHeights[i1]);
+            osg::Vec3 v3(v32d.x, v32d.y, i2 >= _constraintHeights.size() ? _cdtHeights[i2 - _constraintHeights.size()] : _constraintHeights[i2]);
 
             //addDebugTime("getWorstPointPerError: convert to osg", startTime);
             //startTime = osg::Timer::instance()->tick();
@@ -288,7 +290,7 @@ private:
 
 private:
     CDT::Triangulation<float> _triangulation;
-    std::vector<float> _borderHeights;
+    std::vector<float> _constraintHeights;
     std::vector<float> _cdtHeights;
     osg::HeightField *_heightField;
     osg::BoundingBox _heightFieldBbox;
@@ -1512,7 +1514,12 @@ osg::Node* DestinationTile::createScene()
                 itr != _models->_shapeFiles.end();
                 ++itr)
             {
-                _dataSet->getShapeFilePlacer()->place(*this, itr->get());
+                osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
+                for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
+                    if (*ditr != "CONSTRAINT") { // Shapefiles with CUT have been used for Delaunay constraints instead
+                        _dataSet->getShapeFilePlacer()->place(*this, itr->get());
+                    }
+                }
             }
         }
         else
@@ -2211,18 +2218,6 @@ osg::Node* DestinationTile::createTerrainTile()
 }
 
 
-static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, double X, double Y, double Z)
-{
-    return osg::Vec3(X*worldToLocal(0,0) + Y*worldToLocal(1,0) + Z*worldToLocal(2,0) + worldToLocal(3,0),
-                     X*worldToLocal(0,1) + Y*worldToLocal(1,1) + Z*worldToLocal(2,1) + worldToLocal(3,1),
-                     X*worldToLocal(0,2) + Y*worldToLocal(1,2) + Z*worldToLocal(2,2) + worldToLocal(3,2));
-}
-
-static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, const osg::Vec3d &pos)
-{
-    return computeLocalPosition(worldToLocal, pos.x(), pos.y(), pos.z());
-}
-
 static inline osg::Vec3 computeLocalSkirtVector(const osg::EllipsoidModel* et, const osg::HeightField* grid, unsigned int i, unsigned int j, float length, bool useLocalToTileTransform, const osg::Matrixd& localToWorld)
 {
     // no local to tile transform + mapping from lat+longs to XYZ so we need to use
@@ -2620,6 +2615,25 @@ osg::Node* DestinationTile::createPolygonal()
     //startTime = osg::Timer::instance()->tick();
 
     if (!regular) {
+        // Constraints from shape files in best level
+        CreateConstraintsVisitor createConstraintsVisitor(grid, _worldToLocal);
+        if (_models.valid() && _level == _dataSet->getMaximumNumOfLevels() - 1) {
+            for (ModelList::iterator itr = _models->_shapeFiles.begin();
+                itr != _models->_shapeFiles.end();
+                ++itr)
+            {
+                osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
+                for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
+                    if (*ditr == "CONSTRAINT") {
+                        (*itr)->accept(createConstraintsVisitor);
+                    }
+                }
+            }
+        }
+        std::vector<CDT::V2d<float> > constraintVertices = createConstraintsVisitor.getVertices();
+        CDT::EdgeVec constraintEdges = createConstraintsVisitor.getEdges();
+        std::vector<float> constraintHeights = createConstraintsVisitor.getHeights();
+
         // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
         std::reverse(topBorderVertices.begin(), topBorderVertices.end());
         std::reverse(leftBorderVertices.begin(), leftBorderVertices.end());
@@ -2632,21 +2646,20 @@ osg::Node* DestinationTile::createPolygonal()
         borderVertices.insert(borderVertices.end(), rightBorderVertices.begin(), rightBorderVertices.end());
         borderVertices.insert(borderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
         borderVertices.insert(borderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
-        CDT::EdgeVec constraintEdges;
-        for (CDT::VertInd i = 0; i < borderVertices.size() - 1; ++i) {
+        for (CDT::VertInd i = constraintVertices.size(); i < constraintVertices.size() + borderVertices.size() - 1; ++i) {
             constraintEdges.push_back(CDT::Edge(i, i + 1));
         }
-        constraintEdges.push_back(CDT::Edge(borderVertices.size() - 1, 0));
+        constraintEdges.push_back(CDT::Edge(constraintVertices.size() + borderVertices.size() - 1, constraintVertices.size()));
+        constraintVertices.insert(constraintVertices.end(), borderVertices.begin(), borderVertices.end());
 
         //addDebugTime("constraints", startTime);
         //startTime = osg::Timer::instance()->tick();
 
         // Separate border heights, since CDT is 2D
-        std::vector<float> borderHeights;
-        borderHeights.insert(borderHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
-        borderHeights.insert(borderHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
-        borderHeights.insert(borderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
-        borderHeights.insert(borderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
+        constraintHeights.insert(constraintHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
+        constraintHeights.insert(constraintHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
+        constraintHeights.insert(constraintHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
+        constraintHeights.insert(constraintHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
 
         //addDebugTime("border heights", startTime);
         //startTime = osg::Timer::instance()->tick();
@@ -2672,7 +2685,7 @@ osg::Node* DestinationTile::createPolygonal()
             delaunaySucceeded = true;
             CDT::Triangulation<float> delaunayTriangulation;
             try {
-                delaunayTriangulation.insertVertices(borderVertices);
+                delaunayTriangulation.insertVertices(constraintVertices);
                 delaunayTriangulation.insertVertices(cdtVertices);
                 delaunayTriangulation.insertEdges(constraintEdges);
                 delaunayTriangulation.eraseSuperTriangle();
@@ -2698,6 +2711,7 @@ osg::Node* DestinationTile::createPolygonal()
 
             // See if we got any triangles
             if (delaunayTriangulation.triangles.empty()) {
+                log(osg::WARN, "ERROR: Delaunay triangulation empty");
                 delaunaySucceeded = false;
                 break;
             }
@@ -2707,8 +2721,8 @@ osg::Node* DestinationTile::createPolygonal()
 
             // Translate to OSG
             triangulatedVertices->erase(triangulatedVertices->begin(), triangulatedVertices->end());
-            for (unsigned int i = 0; i < borderVertices.size(); ++i)
-                triangulatedVertices->push_back(osg::Vec3(borderVertices[i].x, borderVertices[i].y, borderHeights[i]));
+            for (unsigned int i = 0; i < constraintVertices.size(); ++i)
+                triangulatedVertices->push_back(osg::Vec3(constraintVertices[i].x, constraintVertices[i].y, constraintHeights[i]));
             for (unsigned int i = 0; i < cdtVertices.size(); ++i)
                 triangulatedVertices->push_back(osg::Vec3(cdtVertices[i].x, cdtVertices[i].y, cdtHeights[i]));
             geometry->setVertexArray(triangulatedVertices);
@@ -2730,9 +2744,9 @@ osg::Node* DestinationTile::createPolygonal()
             osg::BoundingBox heightFieldBbox(
                 grid->getOrigin(),
                 grid->getOrigin() + osg::Vec3(
-                grid->getXInterval() * grid->getNumColumns(),
-                grid->getYInterval() * grid->getNumRows(),
-                0.0f
+                    grid->getXInterval() * grid->getNumColumns(),
+                    grid->getYInterval() * grid->getNumRows(),
+                    0.0f
                 )
             );
             if (useLocalToTileTransform) {
@@ -2744,7 +2758,7 @@ osg::Node* DestinationTile::createPolygonal()
             //startTime = osg::Timer::instance()->tick();
 
             // Find batchSize most differing points
-            WorstPointsFinder worstPointFinder(delaunayTriangulation, borderHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
+            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
             std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
 
             if (!worstPointsPerError.empty()) {
