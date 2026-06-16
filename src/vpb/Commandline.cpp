@@ -1351,16 +1351,16 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             processFile(vpb::Source::SHAPEFILE, filename, currentLayerOperation);
             reset();
         }
-        else if (arguments.read(pos, "--outlines", filename))
+        else if (arguments.read(pos, "--constraints", filename))
         {
-            fout<<"--outlines "<<filename<<std::endl;
+            fout<<"--constraints "<<filename<<std::endl;
             osgDB::ifstream in(filename.c_str());
             if (in) {
                 while (!in.eof()) {
-                    std::string outlineFilename;
-                    in >> outlineFilename;
-                    typeAttribute = "Outline";
-                    processFile(vpb::Source::SHAPEFILE, outlineFilename, LayerOperation::CONSTRAINT);
+                    std::string constraintsFilename;
+                    in >> constraintsFilename;
+                    typeAttribute = "Constraint";
+                    processFile(vpb::Source::SHAPEFILE, constraintsFilename, LayerOperation::CONSTRAINT);
                 }
             }
             reset();

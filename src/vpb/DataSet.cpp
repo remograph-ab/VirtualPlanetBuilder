@@ -36,6 +36,9 @@
 #include <vpb/FilePathManager>
 
 #include <vpb/ShapeFilePlacer>
+#include <vpb/CreateConstraintsVisitor>
+
+#include <OpenThreads/ScopedLock>
 
 // GDAL includes
 #include <gdal_priv.h>
@@ -148,6 +151,23 @@ void DataSet::loadSources()
             }
         }
     }
+}
+
+const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs)
+{
+    OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_constraintCacheMutex);
+
+    std::map<osg::Node*, std::vector<std::vector<osg::Vec3d> > >::iterator itr = _constraintRingsCache.find(shapeFileNode);
+    if (itr != _constraintRingsCache.end()) return itr->second;
+
+    // Build the rings once, sampling elevation from all sources at the finest resolution.
+    ElevationSampler sampler(this, cs);
+    CreateConstraintsVisitor visitor(&sampler);
+    shapeFileNode->accept(visitor);
+
+    std::vector<std::vector<osg::Vec3d> >& rings = _constraintRingsCache[shapeFileNode];
+    rings = visitor.getRings();
+    return rings;
 }
 
 bool DataSet::mapLatLongsToXYZ() const

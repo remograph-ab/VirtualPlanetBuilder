@@ -33,7 +33,11 @@
 #include <osgDB/Archive>
 #include <osgDB/DatabaseRevisions>
 
+#include <OpenThreads/Mutex>
+
 #include <set>
+#include <map>
+#include <vector>
 
 #include <vpb/SpatialProperties>
 #include <vpb/Source>
@@ -102,6 +106,11 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         const Task* getTask() const { return _taskFile.get(); }
 
         CompositeSource* getSourceGraph() { return _sourceGraph.get(); }
+
+        /// Returns the cached world-space constraint rings for a constraint shape file node,
+        /// building them once (sampling elevation from all sources at full resolution) and
+        /// caching them for reuse across all destination tiles. Thread safe.
+        const std::vector<std::vector<osg::Vec3d> >& getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs);
 
         void setRegular(const bool &regular);
         bool getRegular() const { return _regular; }
@@ -291,6 +300,9 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         double _maximumError;
         unsigned int _batchSize;
         float _batchMaxDist2;
+
+        OpenThreads::Mutex                          _constraintCacheMutex;
+        std::map<osg::Node*, std::vector<std::vector<osg::Vec3d> > > _constraintRingsCache;
 };
 
 }

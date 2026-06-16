@@ -1,0 +1,21 @@
+#pragma once
+
+#include <osg/Vec3d>
+#include <osg/Matrixd>
+
+namespace vpb
+{
+
+	static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, double X, double Y, double Z)
+	{
+		return osg::Vec3(X*worldToLocal(0,0) + Y*worldToLocal(1,0) + Z*worldToLocal(2,0) + worldToLocal(3,0),
+						 X*worldToLocal(0,1) + Y*worldToLocal(1,1) + Z*worldToLocal(2,1) + worldToLocal(3,1),
+						 X*worldToLocal(0,2) + Y*worldToLocal(1,2) + Z*worldToLocal(2,2) + worldToLocal(3,2));
+	}
+
+	static osg::Vec3 computeLocalPosition(const osg::Matrixd& worldToLocal, const osg::Vec3d &pos)
+	{
+		return computeLocalPosition(worldToLocal, pos.x(), pos.y(), pos.z());
+	}
+
+}

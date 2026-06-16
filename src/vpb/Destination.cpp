@@ -29,12 +29,9 @@
 #include <osg/Notify>
 #include <osg/ImageUtils>
 #include <osg/PagedLOD>
-#include <osg/io_utils>
 #include <osg/GLU>
-#include <osg/TriangleIndexFunctor>
 
 #include <osgDB/ReadFile>
-#include <osgDB/WriteFile>
 #include <osgDB/FileNameUtils>
 
 #include <osgUtil/SmoothingVisitor>
@@ -1470,6 +1467,24 @@ void DestinationTile::addNodeToScene(osg::Node* node, bool transformIfRequired)
 }
 
 
+namespace
+{
+    // Returns true when a shapefile node has been tagged as a Delaunay constraint, in which
+    // case its geometry must not be added to the resulting scene.
+    bool isConstraintShapeFile(osg::Node *node)
+    {
+        if (!node) return false;
+
+        const osg::Node::DescriptionList &descriptions = node->getDescriptions();
+        for (osg::Node::DescriptionList::const_iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr)
+        {
+            if (*ditr == "CONSTRAINT") return true;
+        }
+        return false;
+    }
+}
+
+
 osg::Node* DestinationTile::createScene()
 {
     if (_createdScene.valid()) return _createdScene.get();
@@ -1514,12 +1529,11 @@ osg::Node* DestinationTile::createScene()
                 itr != _models->_shapeFiles.end();
                 ++itr)
             {
-                osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
-                for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
-                    if (*ditr != "CONSTRAINT") { // Shapefiles with CUT have been used for Delaunay constraints instead
-                        _dataSet->getShapeFilePlacer()->place(*this, itr->get());
-                    }
-                }
+                // Shapefiles tagged CONSTRAINT have only been used as Delaunay constraints,
+                // so their geometry must not be added to the resulting scene.
+                if (isConstraintShapeFile(itr->get())) continue;
+
+                _dataSet->getShapeFilePlacer()->place(*this, itr->get());
             }
         }
         else
@@ -1528,6 +1542,10 @@ osg::Node* DestinationTile::createScene()
                 itr != _models->_shapeFiles.end();
                 ++itr)
             {
+                // Skip CONSTRAINT shapefiles here too, otherwise their geometry would be
+                // baked straight into the scene even though it is only a triangulation constraint.
+                if (isConstraintShapeFile(itr->get())) continue;
+
                 addNodeToScene(itr->get());
             }
         }
@@ -2615,8 +2633,12 @@ osg::Node* DestinationTile::createPolygonal()
     //startTime = osg::Timer::instance()->tick();
 
     if (!regular) {
-        // Constraints from shape files in best level
-        CreateConstraintsVisitor createConstraintsVisitor(grid, _worldToLocal);
+        // Constraints from shape files in best level. The world-space rings are built and
+        // cached once per shape file (sampling elevation from all sources at the highest
+        // resolution), then clipped and transformed to this tile here.
+        std::vector<CDT::V2d<float> > constraintVertices;
+        CDT::EdgeVec constraintEdges;
+        std::vector<float> constraintHeights;
         if (_models.valid() && _level == _dataSet->getMaximumNumOfLevels() - 1) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
                 itr != _models->_shapeFiles.end();
@@ -2625,14 +2647,32 @@ osg::Node* DestinationTile::createPolygonal()
                 osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
                 for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
                     if (*ditr == "CONSTRAINT") {
-                        (*itr)->accept(createConstraintsVisitor);
+                        const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get());
+                        buildTileConstraints(rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
+                            constraintVertices, constraintEdges, constraintHeights);
                     }
                 }
             }
         }
-        std::vector<CDT::V2d<float> > constraintVertices = createConstraintsVisitor.getVertices();
-        CDT::EdgeVec constraintEdges = createConstraintsVisitor.getEdges();
-        std::vector<float> constraintHeights = createConstraintsVisitor.getHeights();
+
+        // Merge constraint vertices coinciding between different shapes into a single shared
+        // vertex (remapping edges) so the triangulation does not receive duplicate points.
+        mergeDuplicateConstraintVertices(constraintVertices, constraintEdges, constraintHeights);
+
+        // Drop constraint edges completely covered edge-on by another collinear edge (e.g.
+        // shared boundaries between neighboring constraint areas) to avoid the constrained
+        // Delaunay triangulation reporting self-intersecting constraints.
+        removeCoveredConstraintEdges(constraintVertices, constraintEdges);
+
+        // Split constraint edges that cross each other in their interiors (e.g. a road shape
+        // crossing a model hull shape) at the intersection points, so crossing constraints from
+        // different shapes no longer trip the triangulation's intersecting-constraints check.
+        splitIntersectingConstraintEdges(constraintVertices, constraintEdges, constraintHeights);
+
+        // Push apart constraint vertices that touch the interior of another constraint edge
+        // (T-junctions left behind by the removal above), so the triangulation no longer sees
+        // them as intersecting constraints.
+        separateTouchingConstraintVertices(constraintVertices, constraintEdges);
 
         // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
         std::reverse(topBorderVertices.begin(), topBorderVertices.end());
@@ -2692,6 +2732,18 @@ osg::Node* DestinationTile::createPolygonal()
             }
             catch (std::exception &ex) {
                 log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex.what());
+
+                // TEMP
+                /*
+                std::ofstream objStream("C:\\tmp\\test.obj");
+                for (std::vector<CDT::V2d<float> >::iterator it2 = constraintVertices.begin(); it2 != constraintVertices.end(); ++it2)
+                    objStream << "v " << it2->x << " " << it2->y << " 0" << std::endl;
+                objStream << std::endl;
+                for (CDT::EdgeVec::iterator it2 = constraintEdges.begin(); it2 != constraintEdges.end(); ++it2)
+                    objStream << "l " << (it2->v1() + 1) << " " << (it2->v2() + 1) << std::endl;
+                objStream.close();
+                */
+
                 delaunaySucceeded = false;
                 break;
             }

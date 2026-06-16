@@ -60,6 +60,13 @@ struct VPB_EXPORT SourceData : public osg::Referenced, public SpatialProperties
     float getInterpolatedValue(GDALRasterBand *band, double x, double y, float originalHeight);
     float getInterpolatedValue(osg::HeightField* hf, double x, double y);
 
+    /** Sample a single elevation value at (x,y), where (x,y) are given in the coordinate
+      * system cs. Returns true and sets height if the point lies within this source and a
+      * valid (non no-data) value is available, otherwise returns false. Samples from the
+      * full-resolution dataset. verticalScale is applied to GDAL-raster values just as
+      * readHeightField does. */
+    bool sampleElevation(const osg::CoordinateSystemNode* cs, double verticalScale, double x, double y, float& height);
+
     Source*                                     _source;
 
     bool                                        _hasGCPs;

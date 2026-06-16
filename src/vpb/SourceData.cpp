@@ -166,6 +166,83 @@ float SourceData::getInterpolatedValue(GDALRasterBand *band, double x, double y,
     return result;
 }
 
+bool SourceData::sampleElevation(const osg::CoordinateSystemNode* cs, double verticalScale, double x, double y, float& height)
+{
+    if (!_source) return false;
+
+    GeospatialExtents s_bb = getExtents(cs);
+
+    // Handle geographic datasets that may wrap over the dateline by testing with a 360 degree shift.
+    unsigned int numXChecks = s_bb._isGeographic ? 3 : 1;
+    double xoffset = s_bb._isGeographic ? -360.0 : 0.0;
+    for (unsigned int ic = 0; ic < numXChecks; ++ic, xoffset += 360.0)
+    {
+        if (x < s_bb.xMin() + xoffset || x > s_bb.xMax() + xoffset ||
+            y < s_bb.yMin() || y > s_bb.yMax())
+        {
+            continue;
+        }
+
+        // Vector height fields are loaded as an osg::HeightField.
+        if (_hfDataset.valid())
+        {
+            height = getInterpolatedValue(_hfDataset.get(), x - xoffset, y);
+            return true;
+        }
+
+        // Otherwise sample directly from the full-resolution GDAL dataset.
+        osg::ref_ptr<GeospatialDataset> gdalDataset = _source->getGeospatialDataset(READ_ONLY);
+        if (!gdalDataset.valid()) return false;
+
+        OpenThreads::ScopedLock<OpenThreads::Mutex> lock(gdalDataset->getMutex());
+
+        int numBands = gdalDataset->GetRasterCount();
+        GDALRasterBand* bandGray = 0;
+        GDALRasterBand* bandRed = 0;
+        GDALRasterBand* bandGreen = 0;
+        GDALRasterBand* bandBlue = 0;
+        GDALRasterBand* bandAlpha = 0;
+
+        for (int b = 1; b <= numBands; ++b)
+        {
+            GDALRasterBand* band = gdalDataset->GetRasterBand(b);
+            if (band->GetColorInterpretation() == GCI_GrayIndex) bandGray = band;
+            else if (band->GetColorInterpretation() == GCI_RedBand) bandRed = band;
+            else if (band->GetColorInterpretation() == GCI_GreenBand) bandGreen = band;
+            else if (band->GetColorInterpretation() == GCI_BlueBand) bandBlue = band;
+            else if (band->GetColorInterpretation() == GCI_AlphaBand) bandAlpha = band;
+            else if (bandGray == 0) bandGray = band;
+        }
+
+        GDALRasterBand* bandSelected = 0;
+        if (!bandSelected && bandGray) bandSelected = bandGray;
+        else if (!bandSelected && bandAlpha) bandSelected = bandAlpha;
+        else if (!bandSelected && bandRed) bandSelected = bandRed;
+        else if (!bandSelected && bandGreen) bandSelected = bandGreen;
+        else if (!bandSelected && bandBlue) bandSelected = bandBlue;
+
+        if (!bandSelected) return false;
+
+        ValidValueOperator validValueOperator(bandSelected);
+
+        int success = 0;
+        float offset = bandSelected->GetOffset(&success);
+        if (!success) offset = 0.0f;
+
+        float scale = bandSelected->GetScale(&success);
+        if (!success) scale = 1.0f;
+        scale *= (float)verticalScale;
+
+        float h = getInterpolatedValue(bandSelected, x - xoffset, y, 0.0f);
+        if (validValueOperator.isNoDataValue(h)) continue;
+
+        height = offset + h * scale;
+        return true;
+    }
+
+    return false;
+}
+
 SourceData* SourceData::readData(Source* source)
 {
     if (!source) return 0;

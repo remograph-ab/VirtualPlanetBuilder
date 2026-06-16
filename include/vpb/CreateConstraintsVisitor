@@ -1,0 +1,125 @@
+#pragma once
+
+#include <vector>
+
+#include <osg/NodeVisitor>
+#include <osg/Shape>
+#include <osg/Geometry>
+#include <osg/Matrixd>
+#include <osg/Vec3d>
+#include <osg/CoordinateSystemNode>
+
+#include <vpb/Export>
+#include <vpb/SpatialProperties>
+
+#include <cdt/Triangulation.h>
+
+namespace osg
+{
+	class EllipsoidModel;
+}
+
+namespace vpb
+{
+
+	class DataSet;
+	class Source;
+
+	/// A single closed world-space constraint ring. Each vertex stores the un-projected
+	/// source coordinates: x and y in the destination coordinate system (e.g. longitude and
+	/// latitude in degrees, or projected X/Y), and z the elevation sampled from the sources.
+	/// The closing vertex is not duplicated.
+	typedef std::vector<osg::Vec3d> ConstraintRing;
+	typedef std::vector<ConstraintRing> ConstraintRings;
+
+	/// Samples elevation from a DataSet's height-field sources at full resolution. The
+	/// intersecting source with the finest resolution is preferred so that constraint
+	/// vertices follow the highest resolution elevation available, regardless of which
+	/// destination tile (if any) currently covers them.
+	class VPB_EXPORT ElevationSampler
+	{
+	public:
+		ElevationSampler(DataSet *dataSet, const osg::CoordinateSystemNode *cs);
+
+		/// Returns true and sets height if any source covers (x, y), otherwise false.
+		bool sample(double x, double y, float &height) const;
+
+	private:
+		DataSet *_dataSet;
+		const osg::CoordinateSystemNode *_cs;
+		double _verticalScale;
+		std::vector<Source *> _elevationSources; // finest resolution first
+	};
+
+	/// Visits the geometry of a constraint shape file once and extracts world-space
+	/// constraint rings, sampling each vertex's elevation from the supplied sampler.
+	class VPB_EXPORT CreateConstraintsVisitor : public osg::NodeVisitor
+	{
+	public:
+		CreateConstraintsVisitor(const ElevationSampler *sampler);
+
+		void apply(osg::Geometry &geometry);
+
+		const ConstraintRings &getRings() const { return _rings; }
+
+	private:
+		const ElevationSampler *_sampler;
+		ConstraintRings _rings;
+	};
+
+	/// Builds the per-tile constrained-Delaunay input for a single tile from the cached
+	/// world-space rings. Each ring segment is clipped to the tile extents, and the
+	/// surviving points are transformed into the tile-local coordinate system. The produced
+	/// vertices, edges and heights are appended to the supplied containers; edge indices are
+	/// offset by the current vertices size so several shape files can be combined.
+	VPB_EXPORT void buildTileConstraints(
+		const ConstraintRings &rings,
+		const GeospatialExtents &tileExtents,
+		const osg::EllipsoidModel *ellipsoid,
+		bool mapLatLongsToXYZ,
+		bool useLocalToTileTransform,
+		const osg::Matrixd &worldToLocal,
+		std::vector<CDT::V2d<float> > &vertices,
+		CDT::EdgeVec &edges,
+		std::vector<float> &heights);
+
+	/// Merges constraint vertices that share the same position (e.g. vertices coming from the
+	/// shared boundary of two different shapes), remapping the edges onto the deduplicated
+	/// vertex set and dropping collapsed and exact-duplicate edges. Uses an exact hash lookup
+	/// so the deduplication stays close to O(n). The vertices, edges and heights are all
+	/// updated in place and stay index-aligned.
+	VPB_EXPORT void mergeDuplicateConstraintVertices(
+		std::vector<CDT::V2d<float> > &vertices,
+		CDT::EdgeVec &edges,
+		std::vector<float> &heights);
+
+	/// Splits constraint edges that cross each other in their interiors (e.g. a road shape
+	/// crossing a model hull shape) by inserting a shared vertex at every proper intersection
+	/// and replacing each crossed edge with the chain of sub-edges through those points. This
+	/// is a general fix for the constrained Delaunay triangulation reporting intersecting
+	/// constraints between shapes of different types. Uses a uniform grid so it stays close to
+	/// O(n) for typical inputs. The vertices, edges and heights are all updated in place and
+	/// stay index-aligned.
+	VPB_EXPORT void splitIntersectingConstraintEdges(
+		std::vector<CDT::V2d<float> > &vertices,
+		CDT::EdgeVec &edges,
+		std::vector<float> &heights);
+
+	/// Removes constraint edges that are completely covered edge-on by another (collinear,
+	/// longer or duplicate) constraint edge. Such overlapping coincident edges arise where
+	/// neighboring constraint areas share a boundary and make the constrained Delaunay
+	/// triangulation report self-intersecting constraints. Only the edge list is modified;
+	/// the vertices and their heights are left untouched.
+	VPB_EXPORT void removeCoveredConstraintEdges(
+		const std::vector<CDT::V2d<float> > &vertices,
+		CDT::EdgeVec &edges);
+
+	/// Nudges constraint vertices that lie edge-on in the interior of another constraint edge
+	/// (a T-junction) a tiny step off that edge, toward the side the vertex's own edges occupy.
+	/// This resolves the "touching" constraints the constrained Delaunay triangulation would
+	/// otherwise report as intersecting, without turning the touch into a real crossing. Only
+	/// the vertex positions are modified; the edge list and heights are left untouched.
+	VPB_EXPORT void separateTouchingConstraintVertices(
+		std::vector<CDT::V2d<float> > &vertices,
+		const CDT::EdgeVec &edges);
+}
