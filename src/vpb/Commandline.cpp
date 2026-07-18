@@ -82,7 +82,7 @@ void Commandline::computeGeoTransForRange(double xMin, double xMax, double yMin,
 }
 
 
-void Commandline::processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp)
+void Commandline::processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double& relativeHeight, bool lateral)
 {
     if (filename.empty()) return;
 
@@ -107,7 +107,7 @@ void Commandline::processFile(vpb::Source::Type type, const std::string& filenam
             case(vpb::Source::IMAGE):           processImageOrHeightField(type, filename, layerOp); break;
             case(vpb::Source::HEIGHT_FIELD):    processImageOrHeightField(type, filename, layerOp); break;
             case(vpb::Source::MODEL):           processModel(filename, layerOp); break;
-            case(vpb::Source::SHAPEFILE):       processShapeFile(type, filename, layerOp); break;
+            case(vpb::Source::SHAPEFILE):       processShapeFile(type, filename, layerOp, relativeHeight, lateral); break;
         }
     }
     else
@@ -342,7 +342,7 @@ class ApplyUserDataToDrawables : public osg::NodeVisitor
         bool                                        _replace;
 };
 
-void Commandline::processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp)
+void Commandline::processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, double relativeHeight, bool lateral)
 {
     osg::ref_ptr<osgDB::ReaderWriter::Options> options = new osgDB::ReaderWriter::Options;
     options->setOptionString("double");
@@ -436,6 +436,17 @@ void Commandline::processShapeFile(vpb::Source::Type type, const std::string& fi
             std::stringstream ostr;
             ostr<<"MaxLevel "<<max_level;
             model->addDescription(ostr.str());
+        }
+
+        {
+            std::stringstream ostr;
+            ostr<<"RelativeHeight "<<relativeHeight;
+            model->addDescription(ostr.str());
+        }
+
+        if (lateral)
+        {
+            model->addDescription(std::string("Lateral"));
         }
 
 
@@ -1356,11 +1367,16 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             fout<<"--constraints "<<filename<<std::endl;
             osgDB::ifstream in(filename.c_str());
             if (in) {
-                while (!in.eof()) {
+                std::string line;
+                while (std::getline(in, line)) {
+                    std::stringstream lineStream(line);
                     std::string constraintsFilename;
-                    in >> constraintsFilename;
+                    double relativeHeight = 0.0;
+                    int lateral = 0;
+                    lineStream >> constraintsFilename >> relativeHeight >> lateral;
+                    if (constraintsFilename.empty()) continue;
                     typeAttribute = "Constraint";
-                    processFile(vpb::Source::SHAPEFILE, constraintsFilename, LayerOperation::CONSTRAINT);
+                    processFile(vpb::Source::SHAPEFILE, constraintsFilename, LayerOperation::CONSTRAINT, relativeHeight, lateral != 0);
                 }
             }
             reset();

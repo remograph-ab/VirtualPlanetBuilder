@@ -76,9 +76,10 @@ bool ElevationSampler::sample(double x, double y, float &height) const
 // CreateConstraintsVisitor
 // ---------------------------------------------------------------------------
 
-CreateConstraintsVisitor::CreateConstraintsVisitor(const ElevationSampler *sampler)
+CreateConstraintsVisitor::CreateConstraintsVisitor(const ElevationSampler *sampler, bool lateral)
     : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
     , _sampler(sampler)
+    , _lateral(lateral)
 {
 }
 
@@ -99,19 +100,47 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
 
         ConstraintRing ring;
         ring.reserve(count);
-        for (unsigned int i = 0; i < count; ++i)
+        if (_lateral)
         {
-            unsigned int index = i + first;
-            if (index >= vertices->size()) break;
+            // Road quad strips: the vertices come in consecutive pairs (the two "from" points,
+            // then the two "to" points, and so on). Sample the elevation once at the midpoint of
+            // each pair and give both vertices that same height, so every road cross-section
+            // stays laterally flat. Points outside every source keep a 0.0 height.
+            for (unsigned int i = 0; i + 1 < count; i += 2)
+            {
+                unsigned int index0 = i + first;
+                unsigned int index1 = index0 + 1;
+                if (index1 >= vertices->size()) break;
 
-            osg::Vec3d vertex = (*vertices)[index];
+                osg::Vec3d v0 = (*vertices)[index0];
+                osg::Vec3d v1 = (*vertices)[index1];
 
-            // Sample the elevation from all available sources at the highest resolution.
-            // Points outside every source keep a 0.0 height, matching the terrain default.
-            float z = 0.0f;
-            if (_sampler) _sampler->sample(vertex.x(), vertex.y(), z);
+                double mx = 0.5 * (v0.x() + v1.x());
+                double my = 0.5 * (v0.y() + v1.y());
 
-            ring.push_back(osg::Vec3d(vertex.x(), vertex.y(), (double)z));
+                float z = 0.0f;
+                if (_sampler) _sampler->sample(mx, my, z);
+
+                ring.push_back(osg::Vec3d(v0.x(), v0.y(), (double)z));
+                ring.push_back(osg::Vec3d(v1.x(), v1.y(), (double)z));
+            }
+        }
+        else
+        {
+            for (unsigned int i = 0; i < count; ++i)
+            {
+                unsigned int index = i + first;
+                if (index >= vertices->size()) break;
+
+                osg::Vec3d vertex = (*vertices)[index];
+
+                // Sample the elevation from all available sources at the highest resolution.
+                // Points outside every source keep a 0.0 height, matching the terrain default.
+                float z = 0.0f;
+                if (_sampler) _sampler->sample(vertex.x(), vertex.y(), z);
+
+                ring.push_back(osg::Vec3d(vertex.x(), vertex.y(), (double)z));
+            }
         }
 
         // Drop the duplicated closing vertex; shape file rings repeat the first point.
@@ -206,7 +235,8 @@ void vpb::buildTileConstraints(
     const osg::Matrixd &worldToLocal,
     std::vector<CDT::V2d<float> > &vertices,
     CDT::EdgeVec &edges,
-    std::vector<float> &heights)
+    std::vector<float> &heights,
+    const float& relativeHeight)
 {
     for (size_t r = 0; r < rings.size(); ++r)
     {
@@ -230,7 +260,7 @@ void vpb::buildTileConstraints(
             {
                 osg::Vec3 local = toLocal(ring[i], ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
                 vertices.push_back(CDT::V2d<float>(local.x(), local.y()));
-                heights.push_back(local.z());
+                heights.push_back(local.z() + relativeHeight);
             }
             for (unsigned int k = 0; k + 1 < (unsigned int)n; ++k)
                 edges.push_back(CDT::Edge(base + k, base + k + 1));
@@ -310,7 +340,7 @@ void vpb::buildTileConstraints(
             {
                 osg::Vec3 local = toLocal(polyline[k], ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
                 vertices.push_back(CDT::V2d<float>(local.x(), local.y()));
-                heights.push_back(local.z());
+                heights.push_back(local.z() + relativeHeight);
             }
 
             unsigned int cnt = (unsigned int)polyline.size();
@@ -319,6 +349,33 @@ void vpb::buildTileConstraints(
             if (closed)
                 edges.push_back(CDT::Edge(base + cnt - 1, base));
         }
+    }
+}
+
+void vpb::buildTileConstraintRingsLocal(
+    const ConstraintRings &rings,
+    const osg::EllipsoidModel *ellipsoid,
+    bool mapLatLongsToXYZ,
+    bool useLocalToTileTransform,
+    const osg::Matrixd &worldToLocal,
+    std::vector<std::vector<osg::Vec2> > &localRings)
+{
+    localRings.clear();
+    localRings.reserve(rings.size());
+
+    for (size_t r = 0; r < rings.size(); ++r)
+    {
+        const ConstraintRing &ring = rings[r];
+        if (ring.size() < 3) continue;
+
+        std::vector<osg::Vec2> localRing;
+        localRing.reserve(ring.size());
+        for (size_t i = 0; i < ring.size(); ++i)
+        {
+            osg::Vec3 local = toLocal(ring[i], ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+            localRing.push_back(osg::Vec2(local.x(), local.y()));
+        }
+        localRings.push_back(localRing);
     }
 }
 

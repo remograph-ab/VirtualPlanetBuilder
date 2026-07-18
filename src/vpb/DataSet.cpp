@@ -153,7 +153,7 @@ void DataSet::loadSources()
     }
 }
 
-const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs)
+const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral)
 {
     OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_constraintCacheMutex);
 
@@ -162,7 +162,7 @@ const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::No
 
     // Build the rings once, sampling elevation from all sources at the finest resolution.
     ElevationSampler sampler(this, cs);
-    CreateConstraintsVisitor visitor(&sampler);
+    CreateConstraintsVisitor visitor(&sampler, lateral);
     shapeFileNode->accept(visitor);
 
     std::vector<std::vector<osg::Vec3d> >& rings = _constraintRingsCache[shapeFileNode];

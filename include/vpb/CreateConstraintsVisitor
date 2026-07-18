@@ -6,6 +6,7 @@
 #include <osg/Shape>
 #include <osg/Geometry>
 #include <osg/Matrixd>
+#include <osg/Vec2>
 #include <osg/Vec3d>
 #include <osg/CoordinateSystemNode>
 
@@ -56,7 +57,7 @@ namespace vpb
 	class VPB_EXPORT CreateConstraintsVisitor : public osg::NodeVisitor
 	{
 	public:
-		CreateConstraintsVisitor(const ElevationSampler *sampler);
+		CreateConstraintsVisitor(const ElevationSampler *sampler, bool lateral = false);
 
 		void apply(osg::Geometry &geometry);
 
@@ -64,6 +65,7 @@ namespace vpb
 
 	private:
 		const ElevationSampler *_sampler;
+		bool _lateral;
 		ConstraintRings _rings;
 	};
 
@@ -81,7 +83,21 @@ namespace vpb
 		const osg::Matrixd &worldToLocal,
 		std::vector<CDT::V2d<float> > &vertices,
 		CDT::EdgeVec &edges,
-		std::vector<float> &heights);
+		std::vector<float> &heights,
+		const float &relativeHeight = 0.0f);
+
+	/// Transforms whole world-space constraint rings into the tile-local coordinate system
+	/// (matching the transform buildTileConstraints applies), keeping only the 2D x/y of each
+	/// vertex. Unlike buildTileConstraints the rings are not clipped to the tile, so each
+	/// output ring stays a closed polygon usable for point-in-polygon tests. Rings with fewer
+	/// than three vertices are skipped.
+	VPB_EXPORT void buildTileConstraintRingsLocal(
+		const ConstraintRings &rings,
+		const osg::EllipsoidModel *ellipsoid,
+		bool mapLatLongsToXYZ,
+		bool useLocalToTileTransform,
+		const osg::Matrixd &worldToLocal,
+		std::vector<std::vector<osg::Vec2> > &localRings);
 
 	/// Merges constraint vertices that share the same position (e.g. vertices coming from the
 	/// shared boundary of two different shapes), remapping the edges onto the deduplicated

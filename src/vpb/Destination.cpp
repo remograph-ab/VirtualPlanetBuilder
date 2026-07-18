@@ -36,6 +36,8 @@
 
 #include <osgUtil/SmoothingVisitor>
 
+#include <cstdlib>
+
 using namespace vpb;
 
 #define BATCH_SIZE_FACTOR 0.002
@@ -96,7 +98,8 @@ public:
         const osg::BoundingBox &heightFieldBbox,
         const float &maxError,
         const float &batchSize,
-        const float &batchMaxDist2
+        const float &batchMaxDist2,
+        const std::vector<std::vector<osg::Vec2> > &constraintRings
     )
         : _triangulation(triangulation)
         , _constraintHeights(constraintHeights)
@@ -106,6 +109,7 @@ public:
         , _maxError(maxError)
         , _batchSize(batchSize)
         , _batchMaxDist2(batchMaxDist2)
+        , _constraintRings(constraintRings)
     {
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
@@ -194,6 +198,16 @@ public:
                     if (!withinTriangle(pos, v1, v2, v3))
                         continue;
 
+                    // Within constraint area?
+                    // Even-odd rule supports holes
+                    bool insideConstraint = false;
+                    for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
+                        if (withinRing(pos, _constraintRings[ri]))
+                            insideConstraint = !insideConstraint;
+                    }
+                    if (insideConstraint)
+                        continue;
+
                     //addDebugTime("getWorstPointPerError: withinTriangle", startTime);
                     //startTime = osg::Timer::instance()->tick();
 
@@ -276,6 +290,21 @@ private:
         return !(hasNeg && hasPos);
     }
 
+    inline bool withinRing(const osg::Vec2 &p, const std::vector<osg::Vec2> &ring)
+    {
+        bool inside = false;
+        size_t n = ring.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            const osg::Vec2 &vi = ring[i];
+            const osg::Vec2 &vj = ring[j];
+            if ((vi.y() > p.y()) != (vj.y() > p.y()) &&
+                p.x() < (vj.x() - vi.x()) * (p.y() - vi.y()) / (vj.y() - vi.y()) + vi.x()) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
     inline bool vertexAdded(const osg::Vec2 &pos)
     {
         for (std::vector<CDT::V2d<float> >::iterator it = _triangulation.vertices.begin(); it != _triangulation.vertices.end(); ++it) {
@@ -294,6 +323,7 @@ private:
     float _maxError;
     float _batchSize;
     float _batchMaxDist2;
+    std::vector<std::vector<osg::Vec2> > _constraintRings;
 
     float _heightFieldWidth;
     float _heightFieldHeight;
@@ -2253,6 +2283,58 @@ static inline osg::Vec3 computeLocalSkirtVector(const osg::EllipsoidModel* et, c
     return gravitationVector * -length;
 }
 
+namespace
+{
+    // Even-odd point-in-polygon test across every ring: (x, y) counts as inside when it is
+    // contained by an odd number of rings, so holes (e.g. islands in lakes) fall back to being
+    // outside. Rings are expected to be closed loops in the tile-local coordinate system.
+    inline bool insideConstraintRings(float x, float y, const std::vector<std::vector<osg::Vec2> > &rings)
+    {
+        bool inside = false;
+        for (size_t r = 0; r < rings.size(); ++r) {
+            const std::vector<osg::Vec2> &ring = rings[r];
+            size_t n = ring.size();
+            for (size_t i = 0, j = n - 1; i < n; j = i++) {
+                const osg::Vec2 &vi = ring[i];
+                const osg::Vec2 &vj = ring[j];
+                if ((vi.y() > y) != (vj.y() > y) &&
+                    x < (vj.x() - vi.x()) * (y - vi.y()) / (vj.y() - vi.y()) + vi.x()) {
+                    inside = !inside;
+                }
+            }
+        }
+        return inside;
+    }
+
+    // Drops border vertices (and their index-aligned heights) that fall inside a constraint
+    // area, but always keeps the first and last vertex so the tile outline stays connected at
+    // its corners. Uses the same even-odd rule as the worst-point search so holes are respected.
+    inline void removeBorderVerticesInConstraints(
+        std::vector<CDT::V2d<float> > &vertices,
+        std::vector<float> &heights,
+        const std::vector<std::vector<osg::Vec2> > &rings)
+    {
+        if (vertices.size() <= 2 || rings.empty()) return;
+
+        std::vector<CDT::V2d<float> > keptVertices;
+        std::vector<float> keptHeights;
+        keptVertices.reserve(vertices.size());
+        keptHeights.reserve(heights.size());
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            bool isEndpoint = (i == 0 || i == vertices.size() - 1);
+            if (!isEndpoint && insideConstraintRings(vertices[i].x, vertices[i].y, rings))
+                continue;
+
+            keptVertices.push_back(vertices[i]);
+            keptHeights.push_back(heights[i]);
+        }
+
+        vertices.swap(keptVertices);
+        heights.swap(keptHeights);
+    }
+}
+
 osg::Node* DestinationTile::createPolygonal()
 {
     log(osg::INFO,"--------- DestinationTile::createPolygonal() ------------- ");
@@ -2639,18 +2721,34 @@ osg::Node* DestinationTile::createPolygonal()
         std::vector<CDT::V2d<float> > constraintVertices;
         CDT::EdgeVec constraintEdges;
         std::vector<float> constraintHeights;
+        ConstraintRings constraintRings;
         if (_models.valid() && _level == _dataSet->getMaximumNumOfLevels() - 1) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
                 itr != _models->_shapeFiles.end();
                 ++itr)
             {
                 osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
+                bool isConstraint = false;
+                bool lateral = false;
+                float relativeHeight = 0.0f;
                 for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
                     if (*ditr == "CONSTRAINT") {
-                        const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get());
-                        buildTileConstraints(rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
-                            constraintVertices, constraintEdges, constraintHeights);
+                        isConstraint = true;
                     }
+                    else if (*ditr == "Lateral") {
+                        lateral = true;
+                    }
+                    else if (ditr->compare(0, 15, "RelativeHeight ") == 0) {
+                        relativeHeight = (float)atof(ditr->c_str() + 15);
+                    }
+                }
+                if (isConstraint) {
+                    const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral);
+                    buildTileConstraints(
+                        rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
+                        constraintVertices, constraintEdges, constraintHeights, relativeHeight
+                    );
+                    constraintRings.insert(constraintRings.end(), rings.begin(), rings.end());
                 }
             }
         }
@@ -2674,11 +2772,30 @@ osg::Node* DestinationTile::createPolygonal()
         // them as intersecting constraints.
         separateTouchingConstraintVertices(constraintVertices, constraintEdges);
 
+        // Transform the shape-file constraint rings into this tile's local coordinate system so
+        // the worst-point search can skip height-field samples that fall inside a constraint
+        // area. The tile border constraints are deliberately not part of constraintRings, so
+        // they are never excluded here.
+        std::vector<std::vector<osg::Vec2> > localConstraintRings;
+        buildTileConstraintRingsLocal(
+            constraintRings, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
+            localConstraintRings
+        );
+
         // Reverse top and left vertices to make total border vertices consecutive counter-clockwise from lower left
         std::reverse(topBorderVertices.begin(), topBorderVertices.end());
         std::reverse(leftBorderVertices.begin(), leftBorderVertices.end());
         std::reverse(topBorderHeights.begin(), topBorderHeights.end());
         std::reverse(leftBorderHeights.begin(), leftBorderHeights.end());
+
+        // Exclude border vertices that fall inside a constraint area (keeping each border's
+        // first and last vertex so the tile outline stays connected at the corners), dropping
+        // the aligned heights as well. Uses the same even-odd rule as the worst-point search so
+        // holes (e.g. islands in lakes) are respected.
+        removeBorderVerticesInConstraints(bottomBorderVertices, bottomBorderHeights, localConstraintRings);
+        removeBorderVerticesInConstraints(rightBorderVertices, rightBorderHeights, localConstraintRings);
+        removeBorderVerticesInConstraints(topBorderVertices, topBorderHeights, localConstraintRings);
+        removeBorderVerticesInConstraints(leftBorderVertices, leftBorderHeights, localConstraintRings);
 
         // Create Delaunay constraints for borders
         std::vector<CDT::V2d<float> > borderVertices;
@@ -2810,7 +2927,7 @@ osg::Node* DestinationTile::createPolygonal()
             //startTime = osg::Timer::instance()->tick();
 
             // Find batchSize most differing points
-            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2);
+            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, localConstraintRings);
             std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
 
             if (!worstPointsPerError.empty()) {
