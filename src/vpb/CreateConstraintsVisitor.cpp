@@ -20,6 +20,101 @@
 
 using namespace vpb;
 
+namespace
+{
+    // Orientation sign of the triple (a, b, c) in 2D: >0 counter-clockwise, <0 clockwise,
+    // 0 collinear.
+    inline double orient2d(double ax, double ay, double bx, double by, double cx, double cy)
+    {
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+
+    inline bool onSegment(double ax, double ay, double bx, double by, double px, double py)
+    {
+        return std::min(ax, bx) <= px && px <= std::max(ax, bx) &&
+               std::min(ay, by) <= py && py <= std::max(ay, by);
+    }
+
+    // True when segment (a0,a1) and segment (b0,b1) intersect (including touching endpoints and
+    // collinear overlap).
+    inline bool segmentsIntersect(const osg::Vec2d &a0, const osg::Vec2d &a1,
+                                  const osg::Vec2d &b0, const osg::Vec2d &b1)
+    {
+        double d1 = orient2d(b0.x(), b0.y(), b1.x(), b1.y(), a0.x(), a0.y());
+        double d2 = orient2d(b0.x(), b0.y(), b1.x(), b1.y(), a1.x(), a1.y());
+        double d3 = orient2d(a0.x(), a0.y(), a1.x(), a1.y(), b0.x(), b0.y());
+        double d4 = orient2d(a0.x(), a0.y(), a1.x(), a1.y(), b1.x(), b1.y());
+
+        if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) &&
+            ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0)))
+            return true;
+
+        if (d1 == 0.0 && onSegment(b0.x(), b0.y(), b1.x(), b1.y(), a0.x(), a0.y())) return true;
+        if (d2 == 0.0 && onSegment(b0.x(), b0.y(), b1.x(), b1.y(), a1.x(), a1.y())) return true;
+        if (d3 == 0.0 && onSegment(a0.x(), a0.y(), a1.x(), a1.y(), b0.x(), b0.y())) return true;
+        if (d4 == 0.0 && onSegment(a0.x(), a0.y(), a1.x(), a1.y(), b1.x(), b1.y())) return true;
+
+        return false;
+    }
+
+    // Squared distance from point (px,py) to the closest point on segment (ax,ay)-(bx,by).
+    inline double pointSegmentDistanceSq(double px, double py,
+                                         double ax, double ay, double bx, double by)
+    {
+        double dx = bx - ax;
+        double dy = by - ay;
+        double lenSq = dx * dx + dy * dy;
+        double t = (lenSq > 0.0) ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0.0;
+        if (t < 0.0) t = 0.0;
+        else if (t > 1.0) t = 1.0;
+        double cx = ax + t * dx;
+        double cy = ay + t * dy;
+        double ex = px - cx;
+        double ey = py - cy;
+        return ex * ex + ey * ey;
+    }
+
+    // Squared minimum distance between segments (a0,a1) and (b0,b1); 0 when they intersect.
+    inline double segmentSegmentDistanceSq(const osg::Vec2d &a0, const osg::Vec2d &a1,
+                                           const osg::Vec2d &b0, const osg::Vec2d &b1)
+    {
+        if (segmentsIntersect(a0, a1, b0, b1)) return 0.0;
+        double d = pointSegmentDistanceSq(a0.x(), a0.y(), b0.x(), b0.y(), b1.x(), b1.y());
+        d = std::min(d, pointSegmentDistanceSq(a1.x(), a1.y(), b0.x(), b0.y(), b1.x(), b1.y()));
+        d = std::min(d, pointSegmentDistanceSq(b0.x(), b0.y(), a0.x(), a0.y(), a1.x(), a1.y()));
+        d = std::min(d, pointSegmentDistanceSq(b1.x(), b1.y(), a0.x(), a0.y(), a1.x(), a1.y()));
+        return d;
+    }
+
+    // Fraction of the polygon edge length used as the near-touch tolerance below: a centerline
+    // that comes within this distance of the edge is treated as crossing it. Relative to the
+    // edge length so it stays independent of the coordinate system's units.
+    const double kEdgeCrossToleranceFraction = 0.05;
+
+    // True when the polygon edge (p0,p1) is crossed by, or almost touches, any road centerline
+    // segment. A small tolerance relative to the edge length lets a centerline that merely
+    // grazes the edge still count as a cross-section (lateral).
+    bool edgeCrossedByLine(const osg::Vec3d &p0, const osg::Vec3d &p1,
+                           const std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments)
+    {
+        osg::Vec2d e0(p0.x(), p0.y());
+        osg::Vec2d e1(p1.x(), p1.y());
+
+        double ex = e1.x() - e0.x();
+        double ey = e1.y() - e0.y();
+        double edgeLength = std::sqrt(ex * ex + ey * ey);
+        double tolerance = edgeLength * kEdgeCrossToleranceFraction;
+        double toleranceSq = tolerance * tolerance;
+
+        for (size_t s = 0; s < segments.size(); ++s)
+        {
+            if (segmentSegmentDistanceSq(e0, e1, segments[s].first, segments[s].second) <= toleranceSq)
+                return true;
+        }
+        return false;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ElevationSampler
 // ---------------------------------------------------------------------------
@@ -102,27 +197,75 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
         ring.reserve(count);
         if (_lateral)
         {
-            // Road quad strips: the vertices come in consecutive pairs (the two "from" points,
-            // then the two "to" points, and so on). Sample the elevation once at the midpoint of
-            // each pair and give both vertices that same height, so every road cross-section
-            // stays laterally flat. Points outside every source keep a 0.0 height.
-            for (unsigned int i = 0; i + 1 < count; i += 2)
+            // Road quads: the vertices form a closed polygon (typically a 4-vertex quad per
+            // road segment) but their ordering can't be relied upon. Instead, the road
+            // centerline (from the line shape file) is used to identify which polygon edges are
+            // cross-sections spanning the road width: an edge is a cross-section when the
+            // centerline crosses it. Both endpoints of a crossed edge share a single elevation
+            // sampled at the edge midpoint, so every cross-section stays laterally flat.
+            // Vertices not on any crossed edge fall back to per-vertex sampling. Points outside
+            // every source keep a 0.0 height.
+
+            // Gather the unique polygon vertices, dropping the repeated closing vertex.
+            ConstraintRing poly;
+            poly.reserve(count);
+            for (unsigned int i = 0; i < count; ++i)
             {
-                unsigned int index0 = i + first;
-                unsigned int index1 = index0 + 1;
-                if (index1 >= vertices->size()) break;
+                unsigned int index = i + first;
+                if (index >= vertices->size()) break;
+                poly.push_back((*vertices)[index]);
+            }
+            while (poly.size() >= 2 &&
+                   poly.front().x() == poly.back().x() &&
+                   poly.front().y() == poly.back().y())
+            {
+                poly.pop_back();
+            }
 
-                osg::Vec3d v0 = (*vertices)[index0];
-                osg::Vec3d v1 = (*vertices)[index1];
+            size_t n = poly.size();
+            std::vector<double> zsum(n, 0.0);
+            std::vector<int> zcount(n, 0);
 
-                double mx = 0.5 * (v0.x() + v1.x());
-                double my = 0.5 * (v0.y() + v1.y());
+            std::cout.precision(11);
 
-                float z = 0.0f;
-                if (_sampler) _sampler->sample(mx, my, z);
+            // Each edge crossed by the centerline is a cross-section: sample its midpoint once
+            // and give both endpoints that shared height.
+            if (n >= 2)
+            {
+                for (size_t k = 0; k < n; ++k)
+                {
+                    size_t a = k;
+                    size_t b = (k + 1) % n;
+                    if (edgeCrossedByLine(poly[a], poly[b], _lineSegments))
+                    {
+                        double mx = 0.5 * (poly[a].x() + poly[b].x());
+                        double my = 0.5 * (poly[a].y() + poly[b].y());
+                        float z = 0.0f;
+                        if (_sampler) _sampler->sample(mx, my, z);
+                        zsum[a] += z; ++zcount[a];
+                        zsum[b] += z; ++zcount[b];
 
-                ring.push_back(osg::Vec3d(v0.x(), v0.y(), (double)z));
-                ring.push_back(osg::Vec3d(v1.x(), v1.y(), (double)z));
+                        std::cout << "remo.createLightPoint(false, " << poly[a].x() << ", " << poly[a].y() << ", " << z << ", " << poly[b].x() << ", " << poly[b].y() << ", " << z << ", " << mx << ", " << my << ", " << z << ")" << std::endl;
+                    }
+                }
+            }
+
+            for (size_t k = 0; k < n; ++k)
+            {
+                double z;
+                if (zcount[k] > 0)
+                {
+                    z = zsum[k] / (double)zcount[k];
+                    //std::cout << "remo.createLightPoint(false, " << poly[k].x() << ", " << poly[k].y() << ", " << z << ") remo.setComment(\"" << zsum[k] << " / " << zcount[k] << "\") remo.selectChildren() remo.setAttributes(\"Color Red\", 0, \"Color Green\", 255, \"Color Blue\", 0)" << std::endl;
+                }
+                else
+                {
+                    float pz = 0.0f;
+                    if (_sampler) _sampler->sample(poly[k].x(), poly[k].y(), pz);
+                    z = pz;
+                    //std::cout << "remo.createLightPoint(false, " << poly[k].x() << ", " << poly[k].y() << ", " << z << ") remo.setComment(\"sampled\") remo.selectChildren() remo.setAttributes(\"Color Red\", 255, \"Color Green\", 0, \"Color Blue\", 0)" << std::endl;
+                }
+                ring.push_back(osg::Vec3d(poly[k].x(), poly[k].y(), z));
             }
         }
         else
@@ -153,6 +296,83 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
 
         if (ring.size() >= 2) _rings.push_back(ring);
     }
+}
+
+// ---------------------------------------------------------------------------
+// extractLineSegments
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    class ExtractLineSegmentsVisitor : public osg::NodeVisitor
+    {
+    public:
+        explicit ExtractLineSegmentsVisitor(std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , _segments(segments)
+        {
+        }
+
+        void apply(osg::Geometry &geometry) override
+        {
+            osg::Vec3dArray *vertices = dynamic_cast<osg::Vec3dArray *>(geometry.getVertexArray());
+            if (!vertices) return;
+
+            osg::Geometry::PrimitiveSetList &prims = geometry.getPrimitiveSetList();
+            for (osg::Geometry::PrimitiveSetList::iterator it = prims.begin(); it != prims.end(); ++it)
+            {
+                osg::DrawArrays *drawArrays = dynamic_cast<osg::DrawArrays *>(it->get());
+                if (!drawArrays) continue;
+
+                unsigned int first = drawArrays->getFirst();
+                unsigned int count = drawArrays->getCount();
+                GLenum mode = drawArrays->getMode();
+
+                if (mode == osg::PrimitiveSet::LINES)
+                {
+                    for (unsigned int i = 0; i + 1 < count; i += 2)
+                    {
+                        unsigned int i0 = i + first;
+                        unsigned int i1 = i0 + 1;
+                        if (i1 >= vertices->size()) break;
+                        addSegment((*vertices)[i0], (*vertices)[i1]);
+                    }
+                }
+                else // LINE_STRIP, LINE_LOOP, or anything else with sequential vertices
+                {
+                    for (unsigned int i = 0; i + 1 < count; ++i)
+                    {
+                        unsigned int i0 = i + first;
+                        unsigned int i1 = i0 + 1;
+                        if (i1 >= vertices->size()) break;
+                        addSegment((*vertices)[i0], (*vertices)[i1]);
+                    }
+
+                    if (mode == osg::PrimitiveSet::LINE_LOOP && count >= 2)
+                    {
+                        unsigned int i0 = first + count - 1;
+                        unsigned int i1 = first;
+                        if (i0 < vertices->size() && i1 < vertices->size())
+                            addSegment((*vertices)[i0], (*vertices)[i1]);
+                    }
+                }
+            }
+        }
+
+    private:
+        void addSegment(const osg::Vec3d &a, const osg::Vec3d &b)
+        {
+            _segments.push_back(std::make_pair(osg::Vec2d(a.x(), a.y()), osg::Vec2d(b.x(), b.y())));
+        }
+
+        std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &_segments;
+    };
+}
+
+void vpb::extractLineSegments(osg::Node &node, std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments)
+{
+    ExtractLineSegmentsVisitor visitor(segments);
+    node.accept(visitor);
 }
 
 // ---------------------------------------------------------------------------

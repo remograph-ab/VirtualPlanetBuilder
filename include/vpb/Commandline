@@ -44,10 +44,10 @@ class VPB_EXPORT Commandline
 			CONSTRAINT
         };
 
-        void processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double& relativeHeight = 0.0, bool lateral = false);
+        void processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double& relativeHeight = 0.0, bool lateral = false, const std::string& lineFilename = std::string());
 
         void processImageOrHeightField(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp);
-        void processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, double relativeHeight = 0.0, bool lateral = false);
+        void processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, double relativeHeight = 0.0, bool lateral = false, const std::string& lineFilename = std::string());
         void processModel(const std::string& filename, LayerOperation layerOp);
 
         void processDirectory(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp);

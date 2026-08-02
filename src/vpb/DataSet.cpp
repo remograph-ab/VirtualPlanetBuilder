@@ -153,7 +153,7 @@ void DataSet::loadSources()
     }
 }
 
-const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral)
+const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral, const std::string& lineShapeFile)
 {
     OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_constraintCacheMutex);
 
@@ -163,6 +163,27 @@ const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::No
     // Build the rings once, sampling elevation from all sources at the finest resolution.
     ElevationSampler sampler(this, cs);
     CreateConstraintsVisitor visitor(&sampler, lateral);
+
+    // For lateral (road) shape files, load the road centerline shape file and hand its line
+    // segments to the visitor so it can tell which polygon edges are laterally-flat
+    // cross-sections regardless of the quad vertex ordering.
+    if (lateral && !lineShapeFile.empty())
+    {
+        osg::ref_ptr<osgDB::ReaderWriter::Options> options = new osgDB::ReaderWriter::Options;
+        options->setOptionString("double");
+        osg::ref_ptr<osg::Node> lineNode = osgDB::readNodeFile(lineShapeFile, options.get());
+        if (lineNode.valid())
+        {
+            std::vector<std::pair<osg::Vec2d, osg::Vec2d> > segments;
+            extractLineSegments(*lineNode, segments);
+            visitor.setLineSegments(segments);
+        }
+        else
+        {
+            log(osg::NOTICE, "Warning: unable to load line shape file %s for lateral constraint", lineShapeFile.c_str());
+        }
+    }
+
     shapeFileNode->accept(visitor);
 
     std::vector<std::vector<osg::Vec3d> >& rings = _constraintRingsCache[shapeFileNode];

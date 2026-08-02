@@ -110,9 +110,10 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         /// Returns the cached world-space constraint rings for a constraint shape file node,
         /// building them once (sampling elevation from all sources at full resolution) and
         /// caching them for reuse across all destination tiles. Thread safe. When lateral is
-        /// true the shape file is treated as road quad strips and each consecutive vertex pair
-        /// is sampled at its midpoint so the road stays laterally flat.
-        const std::vector<std::vector<osg::Vec3d> >& getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral = false);
+        /// true the shape file is treated as road quads and, for each polygon edge crossed by
+        /// the road centerline in lineShapeFile, both endpoints share one elevation sampled at
+        /// the edge midpoint so the road stays laterally flat.
+        const std::vector<std::vector<osg::Vec3d> >& getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral = false, const std::string& lineShapeFile = std::string());
 
         void setRegular(const bool &regular);
         bool getRegular() const { return _regular; }

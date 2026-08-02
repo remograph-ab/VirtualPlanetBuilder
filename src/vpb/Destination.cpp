@@ -121,14 +121,32 @@ public:
         _heightFieldNumRows = _heightField->getNumRows();
         _tolerance = (_heightField->getXInterval() + _heightField->getYInterval()) / 20.0f;
 
+        // Precompute a bounding box per ring so the per-point test can cheaply reject
+        // points that fall outside a ring before scanning all of its edges.
+        _constraintRingBounds.reserve(_constraintRings.size());
+        for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
+            const std::vector<osg::Vec2> &ring = _constraintRings[ri];
+            float minX = FLT_MAX, minY = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const osg::Vec2 &vtx = ring[i];
+                if (vtx.x() < minX) minX = vtx.x();
+                if (vtx.x() > maxX) maxX = vtx.x();
+                if (vtx.y() < minY) minY = vtx.y();
+                if (vtx.y() > maxY) maxY = vtx.y();
+            }
+            _constraintRingBounds.push_back(osg::Vec4(minX, minY, maxX, maxY));
+        }
+
         //addDebugTime("WorstPointsFinder constructor", startTime);
     }
 
     inline std::map<float, osg::Vec3> getWorstPointPerError()
     {
+        //osg::Timer_t startTime = osg::Timer::instance()->tick();
         std::map<float, osg::Vec3> worstPointsPerError;
         for (CDT::TriangleVec::iterator it = _triangulation.triangles.begin(); it != _triangulation.triangles.end(); ++it) {
-            //osg::Timer_t startTime = osg::Timer::instance()->tick();
+            //addDebugTime("getWorstPointPerError: traversal", startTime);
+            //startTime = osg::Timer::instance()->tick();
 
             CDT::VertInd i0 = it->vertices[0];
             CDT::VertInd i1 = it->vertices[1];
@@ -195,21 +213,37 @@ public:
                     //startTime = osg::Timer::instance()->tick();
 
                     // Within triangle?
-                    if (!withinTriangle(pos, v1, v2, v3))
+                    if (!withinTriangle(pos, v1, v2, v3)) {
+                        //addDebugTime("getWorstPointPerError: withinTriangle", startTime);
                         continue;
+                    }
+                    
+                    //startTime = osg::Timer::instance()->tick();
 
                     // Within constraint area?
                     // Even-odd rule supports holes
                     bool insideConstraint = false;
                     for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
+                        // Cheap bounding-box reject before the full edge scan.
+                        const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
+                        //std::cout << "Compare pos " << pos.x() << ", " << pos.y() << " with ring bbox " << ringBounds[0] << ", " << ringBounds[1] << " - " << ringBounds[2] << ", " << ringBounds[3] << std::endl;
+                        if (pos.x() < ringBounds[0] || pos.x() > ringBounds[2] ||
+                            pos.y() < ringBounds[1] || pos.y() > ringBounds[3]) {
+                            continue;
+                        }
+
                         if (withinRing(pos, _constraintRings[ri]))
                             insideConstraint = !insideConstraint;
                     }
+
+                    //addDebugTime("getWorstPointPerError: withinRing", startTime);
+                    //startTime = osg::Timer::instance()->tick();
+
                     if (insideConstraint)
                         continue;
 
-                    //addDebugTime("getWorstPointPerError: withinTriangle", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    //if (!_constraintRings.empty())
+                    //    std::cout << std::endl << "###### NOT INSIDE CONSTRAINT" << std::endl;
 
                     // Interpolate Z 
                     float detT = (v2.y() - v3.y()) * (v1.x() - v3.x()) + (v3.x() - v2.x()) * (v1.y() - v3.y());
@@ -267,7 +301,9 @@ public:
                     }
                 }
             }
+            //startTime = osg::Timer::instance()->tick();
         }
+        //addDebugTime("getWorstPointPerError: traversal", startTime);
 
         return worstPointsPerError;
     }
@@ -297,6 +333,18 @@ private:
         for (size_t i = 0, j = n - 1; i < n; j = i++) {
             const osg::Vec2 &vi = ring[i];
             const osg::Vec2 &vj = ring[j];
+
+            // A point lying on an edge (within a small tolerance) is considered inside the ring.
+            float ex = vj.x() - vi.x();
+            float ey = vj.y() - vi.y();
+            float cross = ex * (p.y() - vi.y()) - ey * (p.x() - vi.x());
+            float edgeLength = sqrtf(ex * ex + ey * ey);
+            if (fabsf(cross) <= _tolerance * edgeLength &&
+                p.x() >= std::min(vi.x(), vj.x()) - _tolerance && p.x() <= std::max(vi.x(), vj.x()) + _tolerance &&
+                p.y() >= std::min(vi.y(), vj.y()) - _tolerance && p.y() <= std::max(vi.y(), vj.y()) + _tolerance) {
+                return true;
+            }
+
             if ((vi.y() > p.y()) != (vj.y() > p.y()) &&
                 p.x() < (vj.x() - vi.x()) * (p.y() - vi.y()) / (vj.y() - vi.y()) + vi.x()) {
                 inside = !inside;
@@ -324,6 +372,7 @@ private:
     float _batchSize;
     float _batchMaxDist2;
     std::vector<std::vector<osg::Vec2> > _constraintRings;
+    std::vector<osg::Vec4> _constraintRingBounds;
 
     float _heightFieldWidth;
     float _heightFieldHeight;
@@ -2306,6 +2355,58 @@ namespace
         return inside;
     }
 
+    // Signed winding contribution of a single ring around (x, y), traversed in vertex order.
+    // The sign follows the ring's orientation, so outer rings and their (oppositely wound) holes
+    // cancel, while two same-orientation rings that overlap accumulate instead of cancelling.
+    inline int ringWindingNumber(float x, float y, const std::vector<osg::Vec2> &ring)
+    {
+        int wn = 0;
+        size_t n = ring.size();
+        for (size_t k = 0; k < n; ++k) {
+            const osg::Vec2 &a = ring[k];
+            const osg::Vec2 &b = ring[(k + 1) % n];
+            // isLeft > 0 when (x, y) is left of the directed edge a->b.
+            float isLeft = (b.x() - a.x()) * (y - a.y()) - (x - a.x()) * (b.y() - a.y());
+            if (a.y() <= y) {
+                if (b.y() > y && isLeft > 0.0f) ++wn;     // upward crossing to the left
+            }
+            else {
+                if (b.y() <= y && isLeft < 0.0f) --wn;    // downward crossing to the right
+            }
+        }
+        return wn;
+    }
+
+    // Nonzero-winding inclusion across all of a group's rings. Unlike the even-odd rule this keeps
+    // a point that is covered by two overlapping/crossing constraint areas classified as inside
+    // (the windings add up) instead of cancelling it back out to the terrain, while holes wound
+    // opposite to their outer ring still subtract correctly.
+    inline bool windingInsideRings(float x, float y, const std::vector<std::vector<osg::Vec2> > &rings)
+    {
+        int wn = 0;
+        for (size_t r = 0; r < rings.size(); ++r)
+            wn += ringWindingNumber(x, y, rings[r]);
+        return wn != 0;
+    }
+
+    // Returns the index of the last constraint group (shape file) whose area contains (x, y),
+    // or -1 when the point lies outside every group. Groups are stored in the order the shape
+    // files appear in the constraints file, so returning the last match means a later constraint
+    // wins where two constraint areas overlap or cross. The nonzero-winding test keeps points in
+    // an overlap attributed to a constraint (rather than falling through to the terrain) while
+    // still respecting each file's holes.
+    inline int constraintGroupForPoint(
+        float x, float y,
+        const std::vector<std::vector<std::vector<osg::Vec2> > > &groupRings)
+    {
+        int result = -1;
+        for (size_t g = 0; g < groupRings.size(); ++g) {
+            if (windingInsideRings(x, y, groupRings[g]))
+                result = (int)g;
+        }
+        return result;
+    }
+
     // Drops border vertices (and their index-aligned heights) that fall inside a constraint
     // area, but always keeps the first and last vertex so the tile outline stays connected at
     // its corners. Uses the same even-odd rule as the worst-point search so holes are respected.
@@ -2714,6 +2815,26 @@ osg::Node* DestinationTile::createPolygonal()
     //addDebugTime("stateset", startTime);
     //startTime = osg::Timer::instance()->tick();
 
+    // Shape-file constraint rings in this tile's local coordinate system. Declared here (rather
+    // than inside the !regular block) so both the Delaunay path and the fallback grid path can
+    // classify constraint-interior triangles. Stays empty for regular tiles.
+    std::vector<std::vector<osg::Vec2> > localConstraintRings;
+
+    // Triangle index lists filled by whichever mesh-building path runs below, split by whether
+    // each triangle's centroid falls inside a shape-file constraint area. After the shared mesh
+    // (vertices/normals/tex-coords/curtains) is finalized these are used to move the
+    // constraint-interior triangles into their own named Geode so they survive .osg export.
+    std::vector<GLuint> terrainTriangleIndices;
+    std::vector<GLuint> constraintTriangleIndices;
+
+    // One entry per constraint shape file contributing rings to this tile: the shape file's
+    // simple file name, its rings in tile-local coordinates, and the triangle indices whose
+    // centroid falls inside those rings. Each non-empty group becomes its own Geode named after
+    // the shape file so individual constraints can be located after export.
+    std::vector<std::string> constraintGroupNames;
+    std::vector<std::vector<std::vector<osg::Vec2> > > constraintGroupRings;
+    std::vector<std::vector<GLuint> > constraintGroupTriangles;
+
     if (!regular) {
         // Constraints from shape files in best level. The world-space rings are built and
         // cached once per shape file (sampling elevation from all sources at the highest
@@ -2731,6 +2852,7 @@ osg::Node* DestinationTile::createPolygonal()
                 bool isConstraint = false;
                 bool lateral = false;
                 float relativeHeight = 0.0f;
+                std::string lineShapeFile;
                 for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
                     if (*ditr == "CONSTRAINT") {
                         isConstraint = true;
@@ -2741,14 +2863,29 @@ osg::Node* DestinationTile::createPolygonal()
                     else if (ditr->compare(0, 15, "RelativeHeight ") == 0) {
                         relativeHeight = (float)atof(ditr->c_str() + 15);
                     }
+                    else if (ditr->compare(0, 14, "LineShapeFile ") == 0) {
+                        lineShapeFile = ditr->substr(14);
+                    }
                 }
                 if (isConstraint) {
-                    const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral);
+                    const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral, lineShapeFile);
                     buildTileConstraints(
                         rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
                         constraintVertices, constraintEdges, constraintHeights, relativeHeight
                     );
                     constraintRings.insert(constraintRings.end(), rings.begin(), rings.end());
+
+                    // Keep this shape file's rings as a separate group (in tile-local coords) so
+                    // its interior triangles can be collected into a Geode named after the file.
+                    std::vector<std::vector<osg::Vec2> > groupRings;
+                    buildTileConstraintRingsLocal(
+                        rings, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal, groupRings
+                    );
+                    if (!groupRings.empty()) {
+                        constraintGroupNames.push_back(osgDB::getSimpleFileName((*itr)->getName()));
+                        constraintGroupRings.push_back(groupRings);
+                        constraintGroupTriangles.push_back(std::vector<GLuint>());
+                    }
                 }
             }
         }
@@ -2776,7 +2913,6 @@ osg::Node* DestinationTile::createPolygonal()
         // the worst-point search can skip height-field samples that fall inside a constraint
         // area. The tile border constraints are deliberately not part of constraintRings, so
         // they are never excluded here.
-        std::vector<std::vector<osg::Vec2> > localConstraintRings;
         buildTileConstraintRingsLocal(
             constraintRings, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
             localConstraintRings
@@ -2898,12 +3034,43 @@ osg::Node* DestinationTile::createPolygonal()
             unsigned int numPrims = geometry->getNumPrimitiveSets();
             if (numPrims > 0)
                 geometry->removePrimitiveSet(0, numPrims);
-            std::vector<GLuint> indices;
+            // Classify each triangle by its centroid: triangles whose centroid falls inside a
+            // shape-file constraint area go into constraintTriangleIndices, the rest into
+            // terrainTriangleIndices. The full mesh (both lists) is drawn as a single primitive
+            // set for now so the smoothing/tex-coord/curtain passes below see every triangle; the
+            // constraint triangles are split off into their own Geode once the mesh is finalized.
+            terrainTriangleIndices.clear();
+            constraintTriangleIndices.clear();
+            for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
+                constraintGroupTriangles[g].clear();
             for (CDT::TriangleVec::iterator it = delaunayTriangulation.triangles.begin(); it != delaunayTriangulation.triangles.end(); ++it) {
-                indices.push_back(it->vertices[0]);
-                indices.push_back(it->vertices[1]);
-                indices.push_back(it->vertices[2]);
+                GLuint i0 = it->vertices[0];
+                GLuint i1 = it->vertices[1];
+                GLuint i2 = it->vertices[2];
+
+                const osg::Vec3& p0 = (*triangulatedVertices)[i0];
+                const osg::Vec3& p1 = (*triangulatedVertices)[i1];
+                const osg::Vec3& p2 = (*triangulatedVertices)[i2];
+                float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
+                float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
+
+                int group = constraintGroupForPoint(cx, cy, constraintGroupRings);
+                if (group >= 0) {
+                    constraintGroupTriangles[group].push_back(i0);
+                    constraintGroupTriangles[group].push_back(i1);
+                    constraintGroupTriangles[group].push_back(i2);
+                    constraintTriangleIndices.push_back(i0);
+                    constraintTriangleIndices.push_back(i1);
+                    constraintTriangleIndices.push_back(i2);
+                }
+                else {
+                    terrainTriangleIndices.push_back(i0);
+                    terrainTriangleIndices.push_back(i1);
+                    terrainTriangleIndices.push_back(i2);
+                }
             }
+            std::vector<GLuint> indices(terrainTriangleIndices);
+            indices.insert(indices.end(), constraintTriangleIndices.begin(), constraintTriangleIndices.end());
             geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
 
             //addDebugTime("translate to OSG", startTime);
@@ -2928,6 +3095,10 @@ osg::Node* DestinationTile::createPolygonal()
 
             // Find batchSize most differing points
             WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, localConstraintRings);
+
+            //addDebugTime("WorstPointsFinder constructor", startTime);
+
+            // (separate time measurement within getWorstPointPerError)
             std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
 
             if (!worstPointsPerError.empty()) {
@@ -2979,9 +3150,14 @@ osg::Node* DestinationTile::createPolygonal()
 
         triangulatedVertices = origVertices;
         geometry->setVertexArray(triangulatedVertices);
-        osg::DrawElementsUInt& drawElements = *(new osg::DrawElementsUInt(GL_TRIANGLES,2*3*(numColumns-1)*(numRows-1)));
-        geometry->addPrimitiveSet(&drawElements);
-        int ei=0;
+        // Classify fallback grid triangles the same way as the Delaunay path. The full mesh is
+        // drawn as a single primitive set here; the constraint triangles are split into their own
+        // Geode once the mesh is finalized below.
+        terrainTriangleIndices.clear();
+        constraintTriangleIndices.clear();
+        for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
+            constraintGroupTriangles[g].clear();
+        terrainTriangleIndices.reserve(2*3*(numColumns-1)*(numRows-1));
         for(r=0;r<numRows-1;++r)
         {
             for(c=0;c<numColumns-1;++c)
@@ -2993,30 +3169,50 @@ osg::Node* DestinationTile::createPolygonal()
 
                 float diff_00_11 = fabsf((*triangulatedVertices)[i00].z()-(*triangulatedVertices)[i11].z());
                 float diff_01_10 = fabsf((*triangulatedVertices)[i01].z()-(*triangulatedVertices)[i10].z());
+
+                unsigned int triangles[2][3];
                 if (diff_00_11<diff_01_10)
                 {
                     // diagonal between 00 and 11
-                    drawElements[ei++] = i00;
-                    drawElements[ei++] = i10;
-                    drawElements[ei++] = i11;
-
-                    drawElements[ei++] = i00;
-                    drawElements[ei++] = i11;
-                    drawElements[ei++] = i01;
+                    triangles[0][0] = i00; triangles[0][1] = i10; triangles[0][2] = i11;
+                    triangles[1][0] = i00; triangles[1][1] = i11; triangles[1][2] = i01;
                 }
                 else
                 {
                     // diagonal between 01 and 10
-                    drawElements[ei++] = i01;
-                    drawElements[ei++] = i00;
-                    drawElements[ei++] = i10;
+                    triangles[0][0] = i01; triangles[0][1] = i00; triangles[0][2] = i10;
+                    triangles[1][0] = i01; triangles[1][1] = i10; triangles[1][2] = i11;
+                }
 
-                    drawElements[ei++] = i01;
-                    drawElements[ei++] = i10;
-                    drawElements[ei++] = i11;
+                for (int ti = 0; ti < 2; ++ti)
+                {
+                    const osg::Vec3& p0 = (*triangulatedVertices)[triangles[ti][0]];
+                    const osg::Vec3& p1 = (*triangulatedVertices)[triangles[ti][1]];
+                    const osg::Vec3& p2 = (*triangulatedVertices)[triangles[ti][2]];
+                    float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
+                    float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
+
+                    int group = constraintGroupForPoint(cx, cy, constraintGroupRings);
+                    if (group >= 0) {
+                        constraintGroupTriangles[group].push_back(triangles[ti][0]);
+                        constraintGroupTriangles[group].push_back(triangles[ti][1]);
+                        constraintGroupTriangles[group].push_back(triangles[ti][2]);
+                        constraintTriangleIndices.push_back(triangles[ti][0]);
+                        constraintTriangleIndices.push_back(triangles[ti][1]);
+                        constraintTriangleIndices.push_back(triangles[ti][2]);
+                    }
+                    else {
+                        terrainTriangleIndices.push_back(triangles[ti][0]);
+                        terrainTriangleIndices.push_back(triangles[ti][1]);
+                        terrainTriangleIndices.push_back(triangles[ti][2]);
+                    }
                 }
             }
         }
+        std::vector<GLuint> gridIndices(terrainTriangleIndices);
+        gridIndices.insert(gridIndices.end(), constraintTriangleIndices.begin(), constraintTriangleIndices.end());
+        if (!gridIndices.empty())
+            geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, gridIndices.size(), &(gridIndices.front())));
     }
 
     //startTime = osg::Timer::instance()->tick();
@@ -3192,6 +3388,55 @@ osg::Node* DestinationTile::createPolygonal()
 
     //addDebugTime("create curtains", startTime);
 
+    // Move the constraint-interior triangles into their own Geodes so they remain distinct,
+    // easily-locatable groups after the tile is exported to the .osg family of formats. One Geode
+    // is created per constraint shape file, named after the shape file's simple file name. Each
+    // constraint geometry shares the finalized vertex/normal/tex-coord arrays and state set with
+    // the terrain geometry, so shading matches exactly along the constraint boundary and no
+    // vertices are duplicated. The terrain geometry keeps only the non-constraint triangles (plus
+    // its curtain skirt); the constraint triangles are removed from it to avoid double drawing.
+    std::vector<osg::ref_ptr<osg::Geode> > constraintGeodes;
+    if (!constraintTriangleIndices.empty())
+    {
+        // Drop the combined terrain+constraint triangle set from the terrain geometry, leaving
+        // the curtain skirt (a DrawElementsUShort) in place, then re-add the non-constraint
+        // triangles only.
+        for (unsigned int pi = 0; pi < geometry->getNumPrimitiveSets(); )
+        {
+            osg::DrawElementsUInt* de = dynamic_cast<osg::DrawElementsUInt*>(geometry->getPrimitiveSet(pi));
+            if (de && de->getMode() == GL_TRIANGLES)
+                geometry->removePrimitiveSet(pi);
+            else
+                ++pi;
+        }
+        if (!terrainTriangleIndices.empty())
+            geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, terrainTriangleIndices.size(), &(terrainTriangleIndices.front())));
+
+        for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
+        {
+            std::vector<GLuint>& groupTriangles = constraintGroupTriangles[g];
+            if (groupTriangles.empty())
+                continue;
+
+            osg::Geometry* constraintGeometry = new osg::Geometry;
+            constraintGeometry->setVertexArray(geometry->getVertexArray());
+            if (geometry->getNormalArray())
+                constraintGeometry->setNormalArray(geometry->getNormalArray(), geometry->getNormalArray()->getBinding());
+            if (geometry->getTexCoordArray(0))
+                constraintGeometry->setTexCoordArray(0, geometry->getTexCoordArray(0));
+            constraintGeometry->setStateSet(geometry->getStateSet());
+            constraintGeometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, groupTriangles.size(), &(groupTriangles.front())));
+            constraintGeometry->setName(constraintGroupNames[g]);
+            constraintGeometry->setUserValue("ConstraintTriangles", true);
+
+            osg::Geode* constraintGeode = new osg::Geode;
+            constraintGeode->setName(constraintGroupNames[g]);
+            constraintGeode->setUserValue("ConstraintTriangles", true);
+            constraintGeode->addDrawable(constraintGeometry);
+            constraintGeodes.push_back(constraintGeode);
+        }
+    }
+
     if (useLocalToTileTransform)
     {
         //startTime = osg::Timer::instance()->tick();
@@ -3199,6 +3444,8 @@ osg::Node* DestinationTile::createPolygonal()
         osg::MatrixTransform* mt = new osg::MatrixTransform;
         mt->setMatrix(_localToWorld);
         mt->addChild(geode);
+        for (size_t ci = 0; ci < constraintGeodes.size(); ++ci)
+            mt->addChild(constraintGeodes[ci]);
         
         bool addLocalAxes = false;
         if (addLocalAxes)
@@ -3216,6 +3463,14 @@ osg::Node* DestinationTile::createPolygonal()
     }
     else
     {
+        if (!constraintGeodes.empty())
+        {
+            osg::Group* group = new osg::Group;
+            group->addChild(geode);
+            for (size_t ci = 0; ci < constraintGeodes.size(); ++ci)
+                group->addChild(constraintGeodes[ci]);
+            return group;
+        }
         return geode;
     }
 }

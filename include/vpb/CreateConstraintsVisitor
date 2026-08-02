@@ -7,6 +7,7 @@
 #include <osg/Geometry>
 #include <osg/Matrixd>
 #include <osg/Vec2>
+#include <osg/Vec2d>
 #include <osg/Vec3d>
 #include <osg/CoordinateSystemNode>
 
@@ -59,6 +60,11 @@ namespace vpb
 	public:
 		CreateConstraintsVisitor(const ElevationSampler *sampler, bool lateral = false);
 
+		/// Sets the road centerline segments (in the same source coordinate system as the
+		/// constraint shape file) used by the lateral path to decide which polygon edges are
+		/// cross-sections. Each pair is one line segment (start, end) in x/y.
+		void setLineSegments(const std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments) { _lineSegments = segments; }
+
 		void apply(osg::Geometry &geometry);
 
 		const ConstraintRings &getRings() const { return _rings; }
@@ -66,8 +72,16 @@ namespace vpb
 	private:
 		const ElevationSampler *_sampler;
 		bool _lateral;
+		std::vector<std::pair<osg::Vec2d, osg::Vec2d> > _lineSegments;
 		ConstraintRings _rings;
 	};
+
+	/// Collects the 2D line segments (x/y in source coordinates) from every line geometry in a
+	/// line shape file node. Consecutive vertices of each LINE_STRIP/LINE_LOOP part form one
+	/// segment; LINES parts contribute one segment per consecutive vertex pair.
+	VPB_EXPORT void extractLineSegments(
+		osg::Node &node,
+		std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments);
 
 	/// Builds the per-tile constrained-Delaunay input for a single tile from the cached
 	/// world-space rings. Each ring segment is clipped to the tile extents, and the
