@@ -244,8 +244,6 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
                         if (_sampler) _sampler->sample(mx, my, z);
                         zsum[a] += z; ++zcount[a];
                         zsum[b] += z; ++zcount[b];
-
-                        std::cout << "remo.createLightPoint(false, " << poly[a].x() << ", " << poly[a].y() << ", " << z << ", " << poly[b].x() << ", " << poly[b].y() << ", " << z << ", " << mx << ", " << my << ", " << z << ")" << std::endl;
                     }
                 }
             }
@@ -256,14 +254,12 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
                 if (zcount[k] > 0)
                 {
                     z = zsum[k] / (double)zcount[k];
-                    //std::cout << "remo.createLightPoint(false, " << poly[k].x() << ", " << poly[k].y() << ", " << z << ") remo.setComment(\"" << zsum[k] << " / " << zcount[k] << "\") remo.selectChildren() remo.setAttributes(\"Color Red\", 0, \"Color Green\", 255, \"Color Blue\", 0)" << std::endl;
                 }
                 else
                 {
                     float pz = 0.0f;
                     if (_sampler) _sampler->sample(poly[k].x(), poly[k].y(), pz);
                     z = pz;
-                    //std::cout << "remo.createLightPoint(false, " << poly[k].x() << ", " << poly[k].y() << ", " << z << ") remo.setComment(\"sampled\") remo.selectChildren() remo.setAttributes(\"Color Red\", 255, \"Color Green\", 0, \"Color Blue\", 0)" << std::endl;
                 }
                 ring.push_back(osg::Vec3d(poly[k].x(), poly[k].y(), z));
             }

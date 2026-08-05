@@ -37,6 +37,7 @@
 #include <osgUtil/SmoothingVisitor>
 
 #include <cstdlib>
+#include <unordered_map>
 
 using namespace vpb;
 
@@ -45,13 +46,12 @@ using namespace vpb;
 
 #define SHIFT_RASTER_BY_HALF_CELL
 
-// TEMP
-/*
-static std::map<std::string, double> debugTimes;
-static void addDebugTime(const std::string &name, const osg::Timer_t &startTime)
+// Debug time measurements (activation commented out in DataSet::_buildDestination)
+static std::unordered_map<const char*, double> debugTimes;
+static void addDebugTime(const char* name, const osg::Timer_t &startTime)
 {
     double ms = osg::Timer::instance()->delta_m(startTime, osg::Timer::instance()->tick());
-    std::map<std::string, double>::const_iterator it = debugTimes.find(name);
+    std::unordered_map<const char*, double>::const_iterator it = debugTimes.find(name);
     if (it == debugTimes.end()) {
         debugTimes[name] = ms;
     }
@@ -69,7 +69,7 @@ static struct DebugTimeComparer
 static void reportDebugTimes()
 {
     std::vector<std::pair<std::string, double> > sortedDebugTimes;
-    for (std::map<std::string, double>::const_iterator it = debugTimes.begin(); it != debugTimes.end(); ++it) {
+    for (std::unordered_map<const char*, double>::const_iterator it = debugTimes.begin(); it != debugTimes.end(); ++it) {
         sortedDebugTimes.push_back(std::pair<std::string, double>(it->first, it->second));
     }
     std::sort(sortedDebugTimes.begin(), sortedDebugTimes.end(), debugTimeComparer);
@@ -84,12 +84,26 @@ void DestinationTile::reportTimes()
 {
     reportDebugTimes();
 }
-*/
 
 
 class WorstPointsFinder
 {
 public:
+    struct ConstraintEdge
+    {
+        float viX;
+        float viY;
+        float vjX;
+        float vjY;
+        float ex;
+        float ey;
+        float minX;
+        float maxX;
+        float minY;
+        float maxY;
+        float edgeLength2;
+    };
+
     WorstPointsFinder(
         const CDT::Triangulation<float> &triangulation,
         const std::vector<float> &constraintHeights,
@@ -120,10 +134,12 @@ public:
         _heightFieldNumCols = _heightField->getNumColumns();
         _heightFieldNumRows = _heightField->getNumRows();
         _tolerance = (_heightField->getXInterval() + _heightField->getYInterval()) / 20.0f;
+        _toleranceSquared = _tolerance * _tolerance;
 
         // Precompute a bounding box per ring so the per-point test can cheaply reject
         // points that fall outside a ring before scanning all of its edges.
         _constraintRingBounds.reserve(_constraintRings.size());
+        _constraintRingEdges.reserve(_constraintRings.size());
         for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
             const std::vector<osg::Vec2> &ring = _constraintRings[ri];
             float minX = FLT_MAX, minY = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
@@ -135,6 +151,29 @@ public:
                 if (vtx.y() > maxY) maxY = vtx.y();
             }
             _constraintRingBounds.push_back(osg::Vec4(minX, minY, maxX, maxY));
+
+            std::vector<ConstraintEdge> edges;
+            edges.reserve(ring.size());
+            if (!ring.empty()) {
+                for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+                    const osg::Vec2 &vi = ring[i];
+                    const osg::Vec2 &vj = ring[j];
+                    ConstraintEdge edge;
+                    edge.viX = vi.x();
+                    edge.viY = vi.y();
+                    edge.vjX = vj.x();
+                    edge.vjY = vj.y();
+                    edge.ex = edge.vjX - edge.viX;
+                    edge.ey = edge.vjY - edge.viY;
+                    edge.minX = std::min(edge.viX, edge.vjX);
+                    edge.maxX = std::max(edge.viX, edge.vjX);
+                    edge.minY = std::min(edge.viY, edge.vjY);
+                    edge.maxY = std::max(edge.viY, edge.vjY);
+                    edge.edgeLength2 = edge.ex * edge.ex + edge.ey * edge.ey;
+                    edges.push_back(edge);
+                }
+            }
+            _constraintRingEdges.push_back(edges);
         }
 
         //addDebugTime("WorstPointsFinder constructor", startTime);
@@ -183,6 +222,21 @@ public:
 
             //addDebugTime("getWorstPointPerError: extract col,row bbox", startTime);
 
+            // Pre-filter rings to only those whose bbox intersects this triangle's bbox.
+            // This avoids scanning unrelated constraint rings for every height-field sample.
+            //startTime = osg::Timer::instance()->tick();
+            std::vector<size_t> triangleRingIndices;
+            triangleRingIndices.reserve(_constraintRings.size());
+            for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
+                const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
+                if (ringBounds[2] < bbox.xMin() || ringBounds[0] > bbox.xMax() ||
+                    ringBounds[3] < bbox.yMin() || ringBounds[1] > bbox.yMax()) {
+                    continue;
+                }
+                triangleRingIndices.push_back(ri);
+            }
+            //addDebugTime("getWorstPointPerError: prefilter triangle rings", startTime);
+
             // Traverse triangle bbox in height field
             float v1x = v1.x();
             float v1y = v1.y();
@@ -190,12 +244,28 @@ public:
             float v2y = v2.y();
             float v3x = v3.x();
             float v3y = v3.y();
+            std::vector<size_t> rowRingIndices;
+            rowRingIndices.reserve(triangleRingIndices.size());
             for (unsigned int r = llRow; r <= urRow; ++r) {
+                float y = _heightFieldSouth + _heightFieldHeight * r;
+
+                // Further pre-filter by row so per-point checks only consider rings whose
+                // vertical bbox spans this scanline.
+                //startTime = osg::Timer::instance()->tick();
+                rowRingIndices.clear();
+                for (size_t tr = 0; tr < triangleRingIndices.size(); ++tr) {
+                    size_t ri = triangleRingIndices[tr];
+                    const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
+                    if (y < ringBounds[1] || y > ringBounds[3])
+                        continue;
+                    rowRingIndices.push_back(ri);
+                }
+                //addDebugTime("getWorstPointPerError: prefilter row rings", startTime);
+
                 for (unsigned int c = llCol; c <= urCol; ++c) {
                     //startTime = osg::Timer::instance()->tick();
 
                     float x = _heightFieldWest + _heightFieldWidth * c;
-                    float y = _heightFieldSouth + _heightFieldHeight * r;
 
                     //addDebugTime("getWorstPointPerError: extract heightfield pos", startTime);
                     //startTime = osg::Timer::instance()->tick();
@@ -221,25 +291,30 @@ public:
                     //startTime = osg::Timer::instance()->tick();
 
                     // Within constraint area?
-                    // Even-odd rule supports holes
-                    bool insideConstraint = false;
-                    for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
+                    // Use nonzero winding across rings so nested/overlapping constraints
+                    // from separate shapes stay excluded instead of cancelling out.
+                    int winding = 0;
+                    for (size_t rii = 0; rii < rowRingIndices.size(); ++rii) {
+                        size_t ri = rowRingIndices[rii];
                         // Cheap bounding-box reject before the full edge scan.
                         const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
                         //std::cout << "Compare pos " << pos.x() << ", " << pos.y() << " with ring bbox " << ringBounds[0] << ", " << ringBounds[1] << " - " << ringBounds[2] << ", " << ringBounds[3] << std::endl;
-                        if (pos.x() < ringBounds[0] || pos.x() > ringBounds[2] ||
-                            pos.y() < ringBounds[1] || pos.y() > ringBounds[3]) {
+                        if (pos.x() < ringBounds[0] || pos.x() > ringBounds[2]) {
                             continue;
                         }
 
-                        if (withinRing(pos, _constraintRings[ri]))
-                            insideConstraint = !insideConstraint;
+                        bool onEdge = false;
+                        winding += ringWindingNumber(pos, _constraintRingEdges[ri], onEdge);
+                        if (onEdge) {
+                            winding = 1;
+                            break;
+                        }
                     }
 
                     //addDebugTime("getWorstPointPerError: withinRing", startTime);
                     //startTime = osg::Timer::instance()->tick();
 
-                    if (insideConstraint)
+                    if (winding != 0)
                         continue;
 
                     //if (!_constraintRings.empty())
@@ -326,31 +401,32 @@ private:
         return !(hasNeg && hasPos);
     }
 
-    inline bool withinRing(const osg::Vec2 &p, const std::vector<osg::Vec2> &ring)
+    inline int ringWindingNumber(const osg::Vec2 &p, const std::vector<ConstraintEdge> &edges, bool &onEdge)
     {
-        bool inside = false;
-        size_t n = ring.size();
-        for (size_t i = 0, j = n - 1; i < n; j = i++) {
-            const osg::Vec2 &vi = ring[i];
-            const osg::Vec2 &vj = ring[j];
-
+        onEdge = false;
+        int wn = 0;
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const ConstraintEdge &edge = edges[i];
             // A point lying on an edge (within a small tolerance) is considered inside the ring.
-            float ex = vj.x() - vi.x();
-            float ey = vj.y() - vi.y();
-            float cross = ex * (p.y() - vi.y()) - ey * (p.x() - vi.x());
-            float edgeLength = sqrtf(ex * ex + ey * ey);
-            if (fabsf(cross) <= _tolerance * edgeLength &&
-                p.x() >= std::min(vi.x(), vj.x()) - _tolerance && p.x() <= std::max(vi.x(), vj.x()) + _tolerance &&
-                p.y() >= std::min(vi.y(), vj.y()) - _tolerance && p.y() <= std::max(vi.y(), vj.y()) + _tolerance) {
-                return true;
+            float cross = edge.ex * (p.y() - edge.viY) - edge.ey * (p.x() - edge.viX);
+            float cross2 = cross * cross;
+            if (cross2 <= _toleranceSquared * edge.edgeLength2 &&
+                p.x() >= edge.minX - _tolerance && p.x() <= edge.maxX + _tolerance &&
+                p.y() >= edge.minY - _tolerance && p.y() <= edge.maxY + _tolerance) {
+                onEdge = true;
+                return 0;
             }
 
-            if ((vi.y() > p.y()) != (vj.y() > p.y()) &&
-                p.x() < (vj.x() - vi.x()) * (p.y() - vi.y()) / (vj.y() - vi.y()) + vi.x()) {
-                inside = !inside;
+            float isLeft = edge.ex * (p.y() - edge.viY) - (p.x() - edge.viX) * edge.ey;
+            if (edge.viY <= p.y()) {
+                if (edge.vjY > p.y() && isLeft > 0.0f) ++wn;
+            }
+            else {
+                if (edge.vjY <= p.y() && isLeft < 0.0f) --wn;
             }
         }
-        return inside;
+
+        return wn;
     }
 
     inline bool vertexAdded(const osg::Vec2 &pos)
@@ -373,6 +449,7 @@ private:
     float _batchMaxDist2;
     std::vector<std::vector<osg::Vec2> > _constraintRings;
     std::vector<osg::Vec4> _constraintRingBounds;
+    std::vector<std::vector<ConstraintEdge> > _constraintRingEdges;
 
     float _heightFieldWidth;
     float _heightFieldHeight;
@@ -381,6 +458,7 @@ private:
     unsigned int _heightFieldNumCols;
     unsigned int _heightFieldNumRows;
     float _tolerance;
+    float _toleranceSquared;
 };
 
 
@@ -2334,25 +2412,15 @@ static inline osg::Vec3 computeLocalSkirtVector(const osg::EllipsoidModel* et, c
 
 namespace
 {
-    // Even-odd point-in-polygon test across every ring: (x, y) counts as inside when it is
-    // contained by an odd number of rings, so holes (e.g. islands in lakes) fall back to being
-    // outside. Rings are expected to be closed loops in the tile-local coordinate system.
+    inline int ringWindingNumber(float x, float y, const std::vector<osg::Vec2> &ring);
+    inline bool windingInsideRings(float x, float y, const std::vector<std::vector<osg::Vec2> > &rings);
+
+    // Nonzero-winding point-in-polygon test across every ring.
+    // This keeps nested/overlapping same-orientation constraints inside instead of cancelling
+    // them out (which parity-based odd/even would do), while opposite-wound holes still cancel.
     inline bool insideConstraintRings(float x, float y, const std::vector<std::vector<osg::Vec2> > &rings)
     {
-        bool inside = false;
-        for (size_t r = 0; r < rings.size(); ++r) {
-            const std::vector<osg::Vec2> &ring = rings[r];
-            size_t n = ring.size();
-            for (size_t i = 0, j = n - 1; i < n; j = i++) {
-                const osg::Vec2 &vi = ring[i];
-                const osg::Vec2 &vj = ring[j];
-                if ((vi.y() > y) != (vj.y() > y) &&
-                    x < (vj.x() - vi.x()) * (y - vi.y()) / (vj.y() - vi.y()) + vi.x()) {
-                    inside = !inside;
-                }
-            }
-        }
-        return inside;
+        return windingInsideRings(x, y, rings);
     }
 
     // Signed winding contribution of a single ring around (x, y), traversed in vertex order.
@@ -2389,6 +2457,22 @@ namespace
         return wn != 0;
     }
 
+    inline osg::Vec4 ringsBounds(const std::vector<std::vector<osg::Vec2> > &rings)
+    {
+        float minX = FLT_MAX, minY = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
+        for (size_t r = 0; r < rings.size(); ++r) {
+            const std::vector<osg::Vec2> &ring = rings[r];
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const osg::Vec2 &v = ring[i];
+                if (v.x() < minX) minX = v.x();
+                if (v.x() > maxX) maxX = v.x();
+                if (v.y() < minY) minY = v.y();
+                if (v.y() > maxY) maxY = v.y();
+            }
+        }
+        return osg::Vec4(minX, minY, maxX, maxY);
+    }
+
     // Returns the index of the last constraint group (shape file) whose area contains (x, y),
     // or -1 when the point lies outside every group. Groups are stored in the order the shape
     // files appear in the constraints file, so returning the last match means a later constraint
@@ -2397,10 +2481,15 @@ namespace
     // still respecting each file's holes.
     inline int constraintGroupForPoint(
         float x, float y,
-        const std::vector<std::vector<std::vector<osg::Vec2> > > &groupRings)
+        const std::vector<std::vector<std::vector<osg::Vec2> > > &groupRings,
+        const std::vector<osg::Vec4> &groupBounds)
     {
         int result = -1;
         for (size_t g = 0; g < groupRings.size(); ++g) {
+            const osg::Vec4 &b = groupBounds[g];
+            if (x < b[0] || x > b[2] || y < b[1] || y > b[3])
+                continue;
+
             if (windingInsideRings(x, y, groupRings[g]))
                 result = (int)g;
         }
@@ -2409,7 +2498,7 @@ namespace
 
     // Drops border vertices (and their index-aligned heights) that fall inside a constraint
     // area, but always keeps the first and last vertex so the tile outline stays connected at
-    // its corners. Uses the same even-odd rule as the worst-point search so holes are respected.
+    // its corners. Uses the same nonzero-winding rule as the worst-point search.
     inline void removeBorderVerticesInConstraints(
         std::vector<CDT::V2d<float> > &vertices,
         std::vector<float> &heights,
@@ -2833,6 +2922,7 @@ osg::Node* DestinationTile::createPolygonal()
     // the shape file so individual constraints can be located after export.
     std::vector<std::string> constraintGroupNames;
     std::vector<std::vector<std::vector<osg::Vec2> > > constraintGroupRings;
+    std::vector<osg::Vec4> constraintGroupBounds;
     std::vector<std::vector<GLuint> > constraintGroupTriangles;
 
     if (!regular) {
@@ -2884,6 +2974,7 @@ osg::Node* DestinationTile::createPolygonal()
                     if (!groupRings.empty()) {
                         constraintGroupNames.push_back(osgDB::getSimpleFileName((*itr)->getName()));
                         constraintGroupRings.push_back(groupRings);
+                        constraintGroupBounds.push_back(ringsBounds(groupRings));
                         constraintGroupTriangles.push_back(std::vector<GLuint>());
                     }
                 }
@@ -2926,8 +3017,8 @@ osg::Node* DestinationTile::createPolygonal()
 
         // Exclude border vertices that fall inside a constraint area (keeping each border's
         // first and last vertex so the tile outline stays connected at the corners), dropping
-        // the aligned heights as well. Uses the same even-odd rule as the worst-point search so
-        // holes (e.g. islands in lakes) are respected.
+        // the aligned heights as well. Uses the same nonzero-winding rule as the worst-point
+        // search.
         removeBorderVerticesInConstraints(bottomBorderVertices, bottomBorderHeights, localConstraintRings);
         removeBorderVerticesInConstraints(rightBorderVertices, rightBorderHeights, localConstraintRings);
         removeBorderVerticesInConstraints(topBorderVertices, topBorderHeights, localConstraintRings);
@@ -2972,6 +3063,7 @@ osg::Node* DestinationTile::createPolygonal()
         //addDebugTime("prepare delaunay", startTime);
 
         while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
+            //osg::Timer_t loopstartTime = osg::Timer::instance()->tick();
             //startTime = osg::Timer::instance()->tick();
 
             // Now Delaunay-triangulate
@@ -3043,6 +3135,7 @@ osg::Node* DestinationTile::createPolygonal()
             constraintTriangleIndices.clear();
             for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
                 constraintGroupTriangles[g].clear();
+            //osg::Timer_t classifyTrianglesstartTime = osg::Timer::instance()->tick();
             for (CDT::TriangleVec::iterator it = delaunayTriangulation.triangles.begin(); it != delaunayTriangulation.triangles.end(); ++it) {
                 GLuint i0 = it->vertices[0];
                 GLuint i1 = it->vertices[1];
@@ -3054,7 +3147,7 @@ osg::Node* DestinationTile::createPolygonal()
                 float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
                 float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
 
-                int group = constraintGroupForPoint(cx, cy, constraintGroupRings);
+                int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
                 if (group >= 0) {
                     constraintGroupTriangles[group].push_back(i0);
                     constraintGroupTriangles[group].push_back(i1);
@@ -3069,6 +3162,7 @@ osg::Node* DestinationTile::createPolygonal()
                     terrainTriangleIndices.push_back(i2);
                 }
             }
+            //addDebugTime("translate to OSG: classify triangles", classifyTrianglesStartTime);
             std::vector<GLuint> indices(terrainTriangleIndices);
             indices.insert(indices.end(), constraintTriangleIndices.begin(), constraintTriangleIndices.end());
             geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
@@ -3099,7 +3193,9 @@ osg::Node* DestinationTile::createPolygonal()
             //addDebugTime("WorstPointsFinder constructor", startTime);
 
             // (separate time measurement within getWorstPointPerError)
+            //startTime = osg::Timer::instance()->tick();
             std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
+            //addDebugTime("getWorstPointPerError total", startTime);
 
             if (!worstPointsPerError.empty()) {
                 //startTime = osg::Timer::instance()->tick();
@@ -3136,6 +3232,7 @@ osg::Node* DestinationTile::createPolygonal()
             else {
                 break;
             }
+            //addDebugTime("delaunay loop total", loopStartTime);
             ++loopNumber;
         }
         if (delaunaySucceeded) {
@@ -3192,7 +3289,7 @@ osg::Node* DestinationTile::createPolygonal()
                     float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
                     float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
 
-                    int group = constraintGroupForPoint(cx, cy, constraintGroupRings);
+                    int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
                     if (group >= 0) {
                         constraintGroupTriangles[group].push_back(triangles[ti][0]);
                         constraintGroupTriangles[group].push_back(triangles[ti][1]);

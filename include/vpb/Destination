@@ -175,7 +175,7 @@ public:
     osg::Node* createPolygonal();
 
     // TEMP
-    //static void reportTimes();
+    static void reportTimes();
     
     osg::ClusterCullingCallback* createClusterCullingCallback();
 
