@@ -53,3 +53,6 @@ install_manifest.txt
 *.pdb
 *.bak
 *.log
+/.vscode
+/applications/*.slnx
+*.recipe
