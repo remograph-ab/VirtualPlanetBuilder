@@ -13,6 +13,7 @@ SET(LIB_PUBLIC_HEADERS
     ${HEADER_PATH}/BuildOperation
     ${HEADER_PATH}/BuildOptions
     ${HEADER_PATH}/Commandline
+    ${HEADER_PATH}/CreateConstraintsVisitor
     ${HEADER_PATH}/CreateCurtainsVisitor
     ${HEADER_PATH}/DatabaseBuilder
     ${HEADER_PATH}/DataSet
@@ -34,6 +35,7 @@ SET(LIB_PUBLIC_HEADERS
     ${HEADER_PATH}/Source
     ${HEADER_PATH}/SourceData
     ${HEADER_PATH}/SpatialProperties
+    ${HEADER_PATH}/SpatialUtils
     ${HEADER_PATH}/System
     ${HEADER_PATH}/TextureUtils
     ${HEADER_PATH}/Task
@@ -50,6 +52,7 @@ ADD_LIBRARY(${LIB_NAME}
     BuildOptions.cpp
     BuildOptionsIO.cpp
     Commandline.cpp
+    CreateConstraintsVisitor.cpp
     CreateCurtainsVisitor.cpp
     DatabaseBuilder.cpp
     DatabaseBuilderIO.cpp
