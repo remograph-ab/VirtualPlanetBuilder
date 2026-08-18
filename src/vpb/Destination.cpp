@@ -3247,6 +3247,10 @@ osg::Node* DestinationTile::createPolygonal()
 
         triangulatedVertices = origVertices;
         geometry->setVertexArray(triangulatedVertices);
+        // Drop any primitive set left over from an aborted Delaunay loop, it indexes the discarded vertex array
+        unsigned int numPrims = geometry->getNumPrimitiveSets();
+        if (numPrims > 0)
+            geometry->removePrimitiveSet(0, numPrims);
         // Classify fallback grid triangles the same way as the Delaunay path. The full mesh is
         // drawn as a single primitive set here; the constraint triangles are split into their own
         // Geode once the mesh is finalized below.
@@ -3556,6 +3560,7 @@ osg::Node* DestinationTile::createPolygonal()
 
         //addDebugTime("create local to tile transform", startTime);
                 
+        mt->setName("regular");
         return mt;
     }
     else
@@ -3566,8 +3571,10 @@ osg::Node* DestinationTile::createPolygonal()
             group->addChild(geode);
             for (size_t ci = 0; ci < constraintGeodes.size(); ++ci)
                 group->addChild(constraintGeodes[ci]);
+            group->setName("regular");
             return group;
         }
+        geode->setName("regular");
         return geode;
     }
 }
