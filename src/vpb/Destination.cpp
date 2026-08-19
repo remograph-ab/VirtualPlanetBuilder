@@ -3560,7 +3560,8 @@ osg::Node* DestinationTile::createPolygonal()
 
         //addDebugTime("create local to tile transform", startTime);
                 
-        mt->setName("regular");
+        if (!delaunaySucceeded)
+          mt->setName("regular");
         return mt;
     }
     else
@@ -3571,10 +3572,12 @@ osg::Node* DestinationTile::createPolygonal()
             group->addChild(geode);
             for (size_t ci = 0; ci < constraintGeodes.size(); ++ci)
                 group->addChild(constraintGeodes[ci]);
-            group->setName("regular");
+            if (!delaunaySucceeded)
+              group->setName("regular");
             return group;
         }
-        geode->setName("regular");
+        if (!delaunaySucceeded)
+          geode->setName("regular");
         return geode;
     }
 }
