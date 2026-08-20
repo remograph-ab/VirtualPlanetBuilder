@@ -104,9 +104,10 @@ namespace vpb
 	/// (matching the transform buildTileConstraints applies), keeping only the 2D x/y of each
 	/// vertex. Unlike buildTileConstraints the rings are not clipped to the tile, so each
 	/// output ring stays a closed polygon usable for point-in-polygon tests. Rings with fewer
-	/// than three vertices are skipped.
+	/// than three vertices, and rings whose bounding box misses the tile extents, are skipped.
 	VPB_EXPORT void buildTileConstraintRingsLocal(
 		const ConstraintRings &rings,
+		const GeospatialExtents &tileExtents,
 		const osg::EllipsoidModel *ellipsoid,
 		bool mapLatLongsToXYZ,
 		bool useLocalToTileTransform,

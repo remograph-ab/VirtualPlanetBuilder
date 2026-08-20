@@ -46,6 +46,20 @@ using namespace vpb;
 
 #define SHIFT_RASTER_BY_HALF_CELL
 
+// Fine-grained timers live inside the per-sample loops, where reading the clock and hashing the
+// timer name cost far more than the work they measure. Set to 1 to profile those loops.
+#define VPB_DETAILED_DEBUG_TIMES 0
+
+#if VPB_DETAILED_DEBUG_TIMES
+    #define VPB_DETAIL_TIME_DECL(var) osg::Timer_t var = osg::Timer::instance()->tick()
+    #define VPB_DETAIL_TIME_RESET(var) var = osg::Timer::instance()->tick()
+    #define VPB_DETAIL_TIME_ADD(name, var) //addDebugTime(name, var)
+#else
+    #define VPB_DETAIL_TIME_DECL(var)
+    #define VPB_DETAIL_TIME_RESET(var)
+    #define VPB_DETAIL_TIME_ADD(name, var)
+#endif
+
 // Debug time measurements (activation commented out in DataSet::_buildDestination)
 static std::unordered_map<const char*, double> debugTimes;
 static void addDebugTime(const char* name, const osg::Timer_t &startTime)
@@ -181,29 +195,33 @@ public:
 
     inline std::map<float, osg::Vec3> getWorstPointPerError()
     {
-        //osg::Timer_t startTime = osg::Timer::instance()->tick();
+        VPB_DETAIL_TIME_DECL(startTime);
         std::map<float, osg::Vec3> worstPointsPerError;
-        for (CDT::TriangleVec::iterator it = _triangulation.triangles.begin(); it != _triangulation.triangles.end(); ++it) {
-            //addDebugTime("getWorstPointPerError: traversal", startTime);
-            //startTime = osg::Timer::instance()->tick();
+        std::vector<size_t> triangleRingIndices;
+        std::vector<size_t> rowRingIndices;
+        triangleRingIndices.reserve(_constraintRings.size());
+        rowRingIndices.reserve(_constraintRings.size());
+        for (CDT::TriangleVec::const_iterator it = _triangulation.triangles.begin(); it != _triangulation.triangles.end(); ++it) {
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: traversal", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             CDT::VertInd i0 = it->vertices[0];
             CDT::VertInd i1 = it->vertices[1];
             CDT::VertInd i2 = it->vertices[2];
 
-            CDT::V2d<float> v12d(_triangulation.vertices[i0]);
-            CDT::V2d<float> v22d(_triangulation.vertices[i1]);
-            CDT::V2d<float> v32d(_triangulation.vertices[i2]);
+            const CDT::V2d<float> &v12d = _triangulation.vertices[i0];
+            const CDT::V2d<float> &v22d = _triangulation.vertices[i1];
+            const CDT::V2d<float> &v32d = _triangulation.vertices[i2];
 
-            //addDebugTime("getWorstPointPerError: address CDT", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: address CDT", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             osg::Vec3 v1(v12d.x, v12d.y, i0 >= _constraintHeights.size() ? _cdtHeights[i0 - _constraintHeights.size()] : _constraintHeights[i0]);
             osg::Vec3 v2(v22d.x, v22d.y, i1 >= _constraintHeights.size() ? _cdtHeights[i1 - _constraintHeights.size()] : _constraintHeights[i1]);
             osg::Vec3 v3(v32d.x, v32d.y, i2 >= _constraintHeights.size() ? _cdtHeights[i2 - _constraintHeights.size()] : _constraintHeights[i2]);
 
-            //addDebugTime("getWorstPointPerError: convert to osg", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: convert to osg", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             osg::BoundingBox bbox;
             bbox.expandBy(v1);
@@ -212,21 +230,20 @@ public:
             bbox._min.set(osg::Vec3(std::max<float>(bbox.xMin(), _heightFieldWest), std::max<float>(bbox.yMin(), _heightFieldSouth), 0.0f));
             bbox._max.set(osg::Vec3(std::min<float>(bbox.xMax(), _heightFieldBbox.xMax()), std::min<float>(bbox.yMax(), _heightFieldBbox.yMax()), 0.0f));
 
-            //addDebugTime("getWorstPointPerError: create bbox", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: create bbox", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             unsigned int llCol = static_cast<unsigned int>(std::max<float>(floorf((bbox.xMin() - _heightFieldWest) / _heightFieldWidth), 0.0f));
             unsigned int llRow = static_cast<unsigned int>(std::max<float>(floorf((bbox.yMin() - _heightFieldSouth) / _heightFieldHeight), 0.0f));
             unsigned int urCol = static_cast<unsigned int>(std::min<float>(ceilf((bbox.xMax() - _heightFieldWest) / _heightFieldWidth), _heightFieldNumCols - 1.0f));
             unsigned int urRow = static_cast<unsigned int>(std::min<float>(ceilf((bbox.yMax() - _heightFieldSouth) / _heightFieldHeight), _heightFieldNumRows - 1.0f));
 
-            //addDebugTime("getWorstPointPerError: extract col,row bbox", startTime);
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: extract col,row bbox", startTime);
 
             // Pre-filter rings to only those whose bbox intersects this triangle's bbox.
             // This avoids scanning unrelated constraint rings for every height-field sample.
-            //startTime = osg::Timer::instance()->tick();
-            std::vector<size_t> triangleRingIndices;
-            triangleRingIndices.reserve(_constraintRings.size());
+            VPB_DETAIL_TIME_RESET(startTime);
+            triangleRingIndices.clear();
             for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
                 const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
                 if (ringBounds[2] < bbox.xMin() || ringBounds[0] > bbox.xMax() ||
@@ -235,7 +252,7 @@ public:
                 }
                 triangleRingIndices.push_back(ri);
             }
-            //addDebugTime("getWorstPointPerError: prefilter triangle rings", startTime);
+            VPB_DETAIL_TIME_ADD("getWorstPointPerError: prefilter triangle rings", startTime);
 
             // Traverse triangle bbox in height field
             float v1x = v1.x();
@@ -244,14 +261,21 @@ public:
             float v2y = v2.y();
             float v3x = v3.x();
             float v3y = v3.y();
-            std::vector<size_t> rowRingIndices;
-            rowRingIndices.reserve(triangleRingIndices.size());
+
+            // Edge and barycentric coefficients, constant for the whole triangle.
+            float a1 = v1y - v2y, b1 = v1x - v2x;
+            float a2 = v2y - v3y, b2 = v2x - v3x;
+            float a3 = v3y - v1y, b3 = v3x - v1x;
+            float detT = a2 * (v1x - v3x) + (v3x - v2x) * (v1y - v3y);
+            if (detT == 0.0f)
+                continue;
+
             for (unsigned int r = llRow; r <= urRow; ++r) {
                 float y = _heightFieldSouth + _heightFieldHeight * r;
 
                 // Further pre-filter by row so per-point checks only consider rings whose
                 // vertical bbox spans this scanline.
-                //startTime = osg::Timer::instance()->tick();
+                VPB_DETAIL_TIME_RESET(startTime);
                 rowRingIndices.clear();
                 for (size_t tr = 0; tr < triangleRingIndices.size(); ++tr) {
                     size_t ri = triangleRingIndices[tr];
@@ -260,15 +284,23 @@ public:
                         continue;
                     rowRingIndices.push_back(ri);
                 }
-                //addDebugTime("getWorstPointPerError: prefilter row rings", startTime);
+                VPB_DETAIL_TIME_ADD("getWorstPointPerError: prefilter row rings", startTime);
+
+                // Row-constant parts of the three edge functions and of the barycentric
+                // numerators, hoisted out of the column loop.
+                float rowD1 = b1 * (y - v2y);
+                float rowD2 = b2 * (y - v3y);
+                float rowD3 = b3 * (y - v1y);
+                float rowL1 = (v3x - v2x) * (y - v3y);
+                float rowL2 = (v1x - v3x) * (y - v3y);
 
                 for (unsigned int c = llCol; c <= urCol; ++c) {
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     float x = _heightFieldWest + _heightFieldWidth * c;
 
-                    //addDebugTime("getWorstPointPerError: extract heightfield pos", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_ADD("getWorstPointPerError: extract heightfield pos", startTime);
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     if (x == v1x && y == v1y)
                         continue;
@@ -277,18 +309,23 @@ public:
                     if (x == v3x && y == v3y)
                         continue;
 
-                    osg::Vec2 pos(x, y);
-
-                    //addDebugTime("getWorstPointPerError: compare pos with vertices", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_ADD("getWorstPointPerError: compare pos with vertices", startTime);
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     // Within triangle?
-                    if (!withinTriangle(pos, v1, v2, v3)) {
-                        //addDebugTime("getWorstPointPerError: withinTriangle", startTime);
+                    float d1 = (x - v2x) * a1 - rowD1;
+                    float d2 = (x - v3x) * a2 - rowD2;
+                    float d3 = (x - v1x) * a3 - rowD3;
+                    bool hasNeg = (d1 < 0.0f) || (d2 < 0.0f) || (d3 < 0.0f);
+                    bool hasPos = (d1 > 0.0f) || (d2 > 0.0f) || (d3 > 0.0f);
+                    if (hasNeg && hasPos) {
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: withinTriangle", startTime);
                         continue;
                     }
-                    
-                    //startTime = osg::Timer::instance()->tick();
+
+                    osg::Vec2 pos(x, y);
+
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     // Within constraint area?
                     // Use nonzero winding across rings so nested/overlapping constraints
@@ -298,7 +335,6 @@ public:
                         size_t ri = rowRingIndices[rii];
                         // Cheap bounding-box reject before the full edge scan.
                         const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
-                        //std::cout << "Compare pos " << pos.x() << ", " << pos.y() << " with ring bbox " << ringBounds[0] << ", " << ringBounds[1] << " - " << ringBounds[2] << ", " << ringBounds[3] << std::endl;
                         if (pos.x() < ringBounds[0] || pos.x() > ringBounds[2]) {
                             continue;
                         }
@@ -311,39 +347,35 @@ public:
                         }
                     }
 
-                    //addDebugTime("getWorstPointPerError: withinRing", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_ADD("getWorstPointPerError: withinRing", startTime);
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     if (winding != 0)
                         continue;
 
-                    //if (!_constraintRings.empty())
-                    //    std::cout << std::endl << "###### NOT INSIDE CONSTRAINT" << std::endl;
-
                     // Interpolate Z 
-                    float detT = (v2.y() - v3.y()) * (v1.x() - v3.x()) + (v3.x() - v2.x()) * (v1.y() - v3.y());
-                    float lambda1 = ((v2.y() - v3.y()) * (pos.x() - v3.x()) + (v3.x() - v2.x()) * (pos.y() - v3.y())) / detT;
-                    float lambda2 = ((v3.y() - v1.y()) * (pos.x() - v3.x()) + (v1.x() - v3.x()) * (pos.y() - v3.y())) / detT;
+                    float lambda1 = (a2 * (x - v3x) + rowL1) / detT;
+                    float lambda2 = (a3 * (x - v3x) + rowL2) / detT;
                     float lambda3 = 1.0f - lambda1 - lambda2;
                     float z = lambda1 * v1.z() + lambda2 * v2.z() + lambda3 * v3.z();
 
-                    //addDebugTime("getWorstPointPerError: interpolate Z", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_ADD("getWorstPointPerError: interpolate Z", startTime);
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     // Measure error
                     float height = _heightField->getHeight(c, r);
                     float currentError = fabsf(z - height);
 
-                    //addDebugTime("getWorstPointPerError: extract height and error", startTime);
-                    //startTime = osg::Timer::instance()->tick();
+                    VPB_DETAIL_TIME_ADD("getWorstPointPerError: extract height and error", startTime);
+                    VPB_DETAIL_TIME_RESET(startTime);
 
                     if (currentError > _maxError && (worstPointsPerError.size() < _batchSize || currentError > worstPointsPerError.begin()->first && !vertexAdded(pos))) {
-                        //addDebugTime("getWorstPointPerError: compare error", startTime);
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: compare error", startTime);
 
                         // This error is more than the allowed max error and either we haven't filled the batch yet,
                         // or this error is higher than the current batch lowest error
 
-                        //startTime = osg::Timer::instance()->tick();
+                        VPB_DETAIL_TIME_RESET(startTime);
 
                         // Now check that we are not too close to the other batched points (so that neighbors aren't stealing the whole batch)
                         bool tooClose = false;
@@ -356,51 +388,34 @@ public:
                         if (tooClose)
                             continue;
 
-                        //addDebugTime("getWorstPointPerError: batch points closeness", startTime);
-                        //startTime = osg::Timer::instance()->tick();
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: batch points closeness", startTime);
+                        VPB_DETAIL_TIME_RESET(startTime);
 
                         // We're okay to add the batched point with its error, first remove the best point if batch is full
                         if (worstPointsPerError.size() == _batchSize)
                             worstPointsPerError.erase(worstPointsPerError.begin());
 
-                        //addDebugTime("getWorstPointPerError: remove best", startTime);
-                        //startTime = osg::Timer::instance()->tick();
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: remove best", startTime);
+                        VPB_DETAIL_TIME_RESET(startTime);
 
                         // Now add the point with its error
                         worstPointsPerError[currentError] = osg::Vec3(pos.x(), pos.y(), height);
 
-                        //addDebugTime("getWorstPointPerError: add point", startTime);
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: add point", startTime);
                     }
                     else {
-                        //addDebugTime("getWorstPointPerError: compare error", startTime);
+                        VPB_DETAIL_TIME_ADD("getWorstPointPerError: compare error", startTime);
                     }
                 }
             }
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_RESET(startTime);
         }
-        //addDebugTime("getWorstPointPerError: traversal", startTime);
+        VPB_DETAIL_TIME_ADD("getWorstPointPerError: traversal", startTime);
 
         return worstPointsPerError;
     }
 
 private:
-    inline float sign(const osg::Vec2 v1, const osg::Vec3 v2, const osg::Vec3 v3)
-    {
-        return (v1.x() - v3.x()) * (v2.y() - v3.y()) - (v2.x() - v3.x()) * (v1.y() - v3.y());
-    }
-
-    inline bool withinTriangle(const osg::Vec2 &p, const osg::Vec3 v1, const osg::Vec3 v2, const osg::Vec3 v3)
-    {
-        float d1 = sign(p, v1, v2);
-        float d2 = sign(p, v2, v3);
-        float d3 = sign(p, v3, v1);
-
-        bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-        bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
-
-        return !(hasNeg && hasPos);
-    }
-
     inline int ringWindingNumber(const osg::Vec2 &p, const std::vector<ConstraintEdge> &edges, bool &onEdge)
     {
         onEdge = false;
@@ -431,7 +446,7 @@ private:
 
     inline bool vertexAdded(const osg::Vec2 &pos)
     {
-        for (std::vector<CDT::V2d<float> >::iterator it = _triangulation.vertices.begin(); it != _triangulation.vertices.end(); ++it) {
+        for (std::vector<CDT::V2d<float> >::const_iterator it = _triangulation.vertices.begin(); it != _triangulation.vertices.end(); ++it) {
             if (fabsf(pos.x() - it->x) < _tolerance && fabsf(pos.y() - it->y) < _tolerance)
                 return true;
         }
@@ -439,15 +454,16 @@ private:
     }
 
 private:
-    CDT::Triangulation<float> _triangulation;
-    std::vector<float> _constraintHeights;
-    std::vector<float> _cdtHeights;
+    // Referenced, not copied: the finder is a short-lived view onto data owned by the caller.
+    const CDT::Triangulation<float> &_triangulation;
+    const std::vector<float> &_constraintHeights;
+    const std::vector<float> &_cdtHeights;
     osg::HeightField *_heightField;
     osg::BoundingBox _heightFieldBbox;
     float _maxError;
     float _batchSize;
     float _batchMaxDist2;
-    std::vector<std::vector<osg::Vec2> > _constraintRings;
+    const std::vector<std::vector<osg::Vec2> > &_constraintRings;
     std::vector<osg::Vec4> _constraintRingBounds;
     std::vector<std::vector<ConstraintEdge> > _constraintRingEdges;
 
@@ -2755,7 +2771,7 @@ osg::Node* DestinationTile::createPolygonal()
     {
         for (c = 0; c < numColumns; ++c)
         {
-            //osg::Timer_t startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_DECL(startTime);
 
             double X = orig_X + delta_X * (double)c;
             double Y = orig_Y + delta_Y * (double)r;
@@ -2765,8 +2781,8 @@ osg::Node* DestinationTile::createPolygonal()
 
             double height = Z;
 
-            //addDebugTime("extract XYZ", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("extract XYZ", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             if (mapLatLongsToXYZ)
             {
@@ -2774,23 +2790,23 @@ osg::Node* DestinationTile::createPolygonal()
                 X, Y, Z);
             }
 
-            //addDebugTime("convertLatLongHeightToXYZ", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("convertLatLongHeightToXYZ", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             osg::Vec3d pos(X, Y, Z);
             if (useLocalToTileTransform)
                 pos = computeLocalPosition(_worldToLocal, pos);
 
-            //addDebugTime("computeLocalPosition", startTime);
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_ADD("computeLocalPosition", startTime);
+            VPB_DETAIL_TIME_RESET(startTime);
 
             // Keep a vertex array with all vertices (no simplified borders) in case Delaunay fails and we need regular
             origVertices->push_back(pos);
 
-            //addDebugTime("push to origVertices", startTime);
+            VPB_DETAIL_TIME_ADD("push to origVertices", startTime);
 
             if (maximumError > 0.0) {
-                //startTime = osg::Timer::instance()->tick();
+                VPB_DETAIL_TIME_RESET(startTime);
 
                 // Skip already simplified border vertices
                 if (r == 0 && !simplifiedBottomColumns.empty() && std::find(simplifiedBottomColumns.begin(), simplifiedBottomColumns.end(), c) == simplifiedBottomColumns.end())
@@ -2802,8 +2818,8 @@ osg::Node* DestinationTile::createPolygonal()
                 if (c == numColumns - 1 && !simplifiedRightRows.empty() && std::find(simplifiedRightRows.begin(), simplifiedRightRows.end(), r) == simplifiedRightRows.end())
                     continue;
 
-                //addDebugTime("skip borders", startTime);
-                //startTime = osg::Timer::instance()->tick();
+                VPB_DETAIL_TIME_ADD("skip borders", startTime);
+                VPB_DETAIL_TIME_RESET(startTime);
 
                 // Collect border vertices to use as Delaunay constraints
                 bool isBorder = false;
@@ -2828,22 +2844,22 @@ osg::Node* DestinationTile::createPolygonal()
                     isBorder = true;
                 }
 
-                //addDebugTime("add borders", startTime);
+                VPB_DETAIL_TIME_ADD("add borders", startTime);
 
                 if (isBorder) {
                     continue;
                 }
             }
 
-            //startTime = osg::Timer::instance()->tick();
+            VPB_DETAIL_TIME_RESET(startTime);
 
             v[vi] = pos;
 
-            //addDebugTime("set pos", startTime);
+            VPB_DETAIL_TIME_ADD("set pos", startTime);
 
             if (useClusterCullingCallback)
             {
-                //startTime = osg::Timer::instance()->tick();
+                VPB_DETAIL_TIME_RESET(startTime);
 
                 osg::Vec3 dv = v[vi] - center_position;
                 double d = sqrt(dv.x()*dv.x() + dv.y()*dv.y() + dv.z()*dv.z());
@@ -2868,7 +2884,7 @@ osg::Node* DestinationTile::createPolygonal()
                     useClusterCullingCallback = false;
                 }
 
-            //addDebugTime("cluster", startTime);
+            VPB_DETAIL_TIME_ADD("cluster", startTime);
             }
 
             //t[vi].x() = (c==numColumns-1)? 1.0f : (float)(c)/(float)(numColumns-1);
@@ -2969,7 +2985,7 @@ osg::Node* DestinationTile::createPolygonal()
                     // its interior triangles can be collected into a Geode named after the file.
                     std::vector<std::vector<osg::Vec2> > groupRings;
                     buildTileConstraintRingsLocal(
-                        rings, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal, groupRings
+                        rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal, groupRings
                     );
                     if (!groupRings.empty()) {
                         constraintGroupNames.push_back(osgDB::getSimpleFileName((*itr)->getName()));
@@ -3005,7 +3021,7 @@ osg::Node* DestinationTile::createPolygonal()
         // area. The tile border constraints are deliberately not part of constraintRings, so
         // they are never excluded here.
         buildTileConstraintRingsLocal(
-            constraintRings, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
+            constraintRings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
             localConstraintRings
         );
 
@@ -3061,6 +3077,27 @@ osg::Node* DestinationTile::createPolygonal()
         unsigned int numEqual = 0;
 
         //addDebugTime("prepare delaunay", startTime);
+        //startTime = osg::Timer::instance()->tick();
+
+        // Prepare height field bbox (loop invariant)
+        osg::BoundingBox heightFieldBbox(
+            grid->getOrigin(),
+            grid->getOrigin() + osg::Vec3(
+                grid->getXInterval() * grid->getNumColumns(),
+                grid->getYInterval() * grid->getNumRows(),
+                0.0f
+            )
+        );
+        if (useLocalToTileTransform) {
+            heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldBbox._min);
+            heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldBbox._max);
+        }
+
+        //addDebugTime("height field bbox", startTime);
+
+        // Kept alive across iterations so the mesh only has to be translated to OSG once, after
+        // the loop has converged on the final triangulation.
+        CDT::Triangulation<float> delaunayTriangulation;
 
         while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
             //osg::Timer_t loopstartTime = osg::Timer::instance()->tick();
@@ -3068,7 +3105,7 @@ osg::Node* DestinationTile::createPolygonal()
 
             // Now Delaunay-triangulate
             delaunaySucceeded = true;
-            CDT::Triangulation<float> delaunayTriangulation;
+            delaunayTriangulation = CDT::Triangulation<float>();
             try {
                 delaunayTriangulation.insertVertices(constraintVertices);
                 delaunayTriangulation.insertVertices(cdtVertices);
@@ -3114,18 +3151,78 @@ osg::Node* DestinationTile::createPolygonal()
             }
 
             //addDebugTime("check empty", startTime);
+
+            // Number of vertices this triangulation was built from, used by the infinite-loop
+            // guard below (the new batch is appended to cdtVertices further down).
+            unsigned int numLoopVertices = (unsigned int)(constraintVertices.size() + cdtVertices.size());
+
             //startTime = osg::Timer::instance()->tick();
 
-            // Translate to OSG
+            // Find batchSize most differing points
+            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, localConstraintRings);
+
+            //addDebugTime("WorstPointsFinder constructor", startTime);
+
+            // (separate time measurement within getWorstPointPerError)
+            //startTime = osg::Timer::instance()->tick();
+            std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
+            //addDebugTime("getWorstPointPerError total", startTime);
+
+            if (!worstPointsPerError.empty()) {
+                //startTime = osg::Timer::instance()->tick();
+
+                for (std::map<float, osg::Vec3>::iterator it = worstPointsPerError.begin(); it != worstPointsPerError.end(); ++it) {
+                    cdtVertices.push_back(CDT::V2d<float>(it->second.x(), it->second.y()));
+                    cdtHeights.push_back(it->second.z());
+                }
+
+                currentError = worstPointsPerError.rbegin()->first;
+
+                //addDebugTime("add new vertices and heights", startTime);
+                //startTime = osg::Timer::instance()->tick();
+
+                // Pragmatic avoidance of infinite loop
+                // (seems to be a bug in DelaunayTriangulator causing t-vertices with cracks somehow,
+                //  resulting in the addition of the same point over and over again)
+                if (currentError == lastError && numLoopVertices == lastNumVertices) {
+                    ++numEqual;
+                    if (numEqual > 10) {
+                        // Bail out after 10 equal results
+                        log(osg::WARN, "WARNING: Give up after repeated error %f and %d triangles", currentError, numLoopVertices);
+                        break;
+                    }
+                }
+                else {
+                    numEqual = 0;
+                }
+                lastError = currentError;
+                lastNumVertices = numLoopVertices;
+
+                //addDebugTime("pragmatic avoidance of infinite loop", startTime);
+            }
+            else {
+                break;
+            }
+            //addDebugTime("delaunay loop total", loopStartTime);
+            ++loopNumber;
+        }
+        if (delaunaySucceeded) {
+            log(osg::NOTICE, "Level %d tile %d,%d: %d incremental Delaunay loops", _level, _tileX, _tileY, loopNumber);
+
+            //startTime = osg::Timer::instance()->tick();
+
+            // Translate the converged triangulation to OSG. Only the final mesh is needed, so
+            // this runs once instead of on every incremental loop. The vertices are taken from
+            // the triangulation itself, so any batch added after the last triangulation is left
+            // out (the triangle indices would not reference it).
             triangulatedVertices->erase(triangulatedVertices->begin(), triangulatedVertices->end());
-            for (unsigned int i = 0; i < constraintVertices.size(); ++i)
-                triangulatedVertices->push_back(osg::Vec3(constraintVertices[i].x, constraintVertices[i].y, constraintHeights[i]));
-            for (unsigned int i = 0; i < cdtVertices.size(); ++i)
-                triangulatedVertices->push_back(osg::Vec3(cdtVertices[i].x, cdtVertices[i].y, cdtHeights[i]));
+            triangulatedVertices->reserve(delaunayTriangulation.vertices.size());
+            for (size_t i = 0; i < delaunayTriangulation.vertices.size(); ++i) {
+                const CDT::V2d<float> &vtx = delaunayTriangulation.vertices[i];
+                float h = i >= constraintHeights.size() ? cdtHeights[i - constraintHeights.size()] : constraintHeights[i];
+                triangulatedVertices->push_back(osg::Vec3(vtx.x, vtx.y, h));
+            }
             geometry->setVertexArray(triangulatedVertices);
-            unsigned int numPrims = geometry->getNumPrimitiveSets();
-            if (numPrims > 0)
-                geometry->removePrimitiveSet(0, numPrims);
             // Classify each triangle by its centroid: triangles whose centroid falls inside a
             // shape-file constraint area go into constraintTriangleIndices, the rest into
             // terrainTriangleIndices. The full mesh (both lists) is drawn as a single primitive
@@ -3135,7 +3232,7 @@ osg::Node* DestinationTile::createPolygonal()
             constraintTriangleIndices.clear();
             for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
                 constraintGroupTriangles[g].clear();
-            //osg::Timer_t classifyTrianglesstartTime = osg::Timer::instance()->tick();
+            //osg::Timer_t classifyTrianglesStartTime = osg::Timer::instance()->tick();
             for (CDT::TriangleVec::iterator it = delaunayTriangulation.triangles.begin(); it != delaunayTriangulation.triangles.end(); ++it) {
                 GLuint i0 = it->vertices[0];
                 GLuint i1 = it->vertices[1];
@@ -3165,78 +3262,12 @@ osg::Node* DestinationTile::createPolygonal()
             //addDebugTime("translate to OSG: classify triangles", classifyTrianglesStartTime);
             std::vector<GLuint> indices(terrainTriangleIndices);
             indices.insert(indices.end(), constraintTriangleIndices.begin(), constraintTriangleIndices.end());
-            geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
+            if (indices.empty())
+                delaunaySucceeded = false;
+            else
+                geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, indices.size(), &(indices.front())));
 
             //addDebugTime("translate to OSG", startTime);
-            //startTime = osg::Timer::instance()->tick();
-
-            // Prepare height field bbox
-            osg::BoundingBox heightFieldBbox(
-                grid->getOrigin(),
-                grid->getOrigin() + osg::Vec3(
-                    grid->getXInterval() * grid->getNumColumns(),
-                    grid->getYInterval() * grid->getNumRows(),
-                    0.0f
-                )
-            );
-            if (useLocalToTileTransform) {
-                heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldBbox._min);
-                heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldBbox._max);
-            }
-
-            //addDebugTime("height field bbox", startTime);
-            //startTime = osg::Timer::instance()->tick();
-
-            // Find batchSize most differing points
-            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, localConstraintRings);
-
-            //addDebugTime("WorstPointsFinder constructor", startTime);
-
-            // (separate time measurement within getWorstPointPerError)
-            //startTime = osg::Timer::instance()->tick();
-            std::map<float, osg::Vec3> worstPointsPerError = worstPointFinder.getWorstPointPerError();
-            //addDebugTime("getWorstPointPerError total", startTime);
-
-            if (!worstPointsPerError.empty()) {
-                //startTime = osg::Timer::instance()->tick();
-
-                for (std::map<float, osg::Vec3>::iterator it = worstPointsPerError.begin(); it != worstPointsPerError.end(); ++it) {
-                    cdtVertices.push_back(CDT::V2d<float>(it->second.x(), it->second.y()));
-                    cdtHeights.push_back(it->second.z());
-                }
-
-                currentError = worstPointsPerError.rbegin()->first;
-
-                //addDebugTime("add new vertices and heights", startTime);
-                //startTime = osg::Timer::instance()->tick();
-
-                // Pragmatic avoidance of infinite loop
-                // (seems to be a bug in DelaunayTriangulator causing t-vertices with cracks somehow,
-                //  resulting in the addition of the same point over and over again)
-                if (currentError == lastError && triangulatedVertices->size() == lastNumVertices) {
-                    ++numEqual;
-                    if (numEqual > 10) {
-                        // Bail out after 10 equal results
-                        log(osg::WARN, "WARNING: Give up after repeated error %f and %d triangles", currentError, triangulatedVertices->size());
-                        break;
-                    }
-                }
-                else {
-                    numEqual = 0;
-                }
-                lastError = currentError;
-                lastNumVertices = triangulatedVertices->size();
-
-                //addDebugTime("pragmatic avoidance of infinite loop", startTime);
-            }
-            else {
-                break;
-            }
-            //addDebugTime("delaunay loop total", loopStartTime);
-            ++loopNumber;
-        }
-        if (delaunaySucceeded) {
-            log(osg::NOTICE, "Level %d tile %d,%d: %d incremental Delaunay loops", _level, _tileX, _tileY, loopNumber);
         }
     }
 

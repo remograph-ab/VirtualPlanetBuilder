@@ -442,6 +442,25 @@ namespace
 
 } // unnamed namespace
 
+namespace
+{
+    // True when the ring's bounding box misses the tile: such a ring can neither cross the tile
+    // nor contain any of its points, so the whole ring can be skipped.
+    bool ringOutsideExtents(const vpb::ConstraintRing &ring, const GeospatialExtents &tileExtents)
+    {
+        double minX = DBL_MAX, minY = DBL_MAX, maxX = -DBL_MAX, maxY = -DBL_MAX;
+        for (size_t i = 0; i < ring.size(); ++i)
+        {
+            minX = std::min(minX, ring[i].x());
+            maxX = std::max(maxX, ring[i].x());
+            minY = std::min(minY, ring[i].y());
+            maxY = std::max(maxY, ring[i].y());
+        }
+        return maxX < tileExtents.xMin() || minX > tileExtents.xMax() ||
+               maxY < tileExtents.yMin() || minY > tileExtents.yMax();
+    }
+}
+
 void vpb::buildTileConstraints(
     const ConstraintRings &rings,
     const GeospatialExtents &tileExtents,
@@ -459,6 +478,7 @@ void vpb::buildTileConstraints(
         const ConstraintRing &ring = rings[r];
         size_t n = ring.size();
         if (n < 2) continue;
+        if (ringOutsideExtents(ring, tileExtents)) continue;
 
         // Fast path: when the whole ring lies inside the tile, emit it directly as a closed
         // loop. This is both quicker and guarantees the closing edge is always present for
@@ -570,6 +590,7 @@ void vpb::buildTileConstraints(
 
 void vpb::buildTileConstraintRingsLocal(
     const ConstraintRings &rings,
+    const GeospatialExtents &tileExtents,
     const osg::EllipsoidModel *ellipsoid,
     bool mapLatLongsToXYZ,
     bool useLocalToTileTransform,
@@ -583,6 +604,7 @@ void vpb::buildTileConstraintRingsLocal(
     {
         const ConstraintRing &ring = rings[r];
         if (ring.size() < 3) continue;
+        if (ringOutsideExtents(ring, tileExtents)) continue;
 
         std::vector<osg::Vec2> localRing;
         localRing.reserve(ring.size());
