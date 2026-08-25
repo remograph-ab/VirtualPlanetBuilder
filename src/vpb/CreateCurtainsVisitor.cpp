@@ -19,6 +19,7 @@ struct FindEdgesFunctor
   , texCoords(NULL)
   , primitives(new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLES))
   , curtainHeight(1.0f)
+  , constraintTriangles(NULL)
   {
   }
 
@@ -60,6 +61,10 @@ struct FindEdgesFunctor
 
   inline void operator() (unsigned int p1, unsigned int p2, unsigned int p3)
   {
+    // Constraint areas are separate, self-contained surfaces, so they get no curtains.
+    if (constraintTriangles && constraintTriangles->find(TriangleKey(p1, p2, p3)) != constraintTriangles->end())
+      return;
+
     osg::Vec3 v1 = (*vertices)[p1];
     osg::Vec3 v2 = (*vertices)[p2];
     osg::Vec3 v3 = (*vertices)[p3];
@@ -75,13 +80,20 @@ struct FindEdgesFunctor
   osg::Vec2Array *texCoords;
   osg::DrawElementsUShort *primitives;
   float curtainHeight;
+  const std::set<TriangleKey> *constraintTriangles;
 };
 
-CreateCurtainsVisitor::CreateCurtainsVisitor(const osg::BoundingBox &bbox, const float &curtainHeight)
+CreateCurtainsVisitor::CreateCurtainsVisitor(const osg::BoundingBox &bbox, const float &curtainHeight,
+                                             const std::vector<unsigned int> &constraintTriangleIndices)
   : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
   , _bbox(bbox)
   , _curtainHeight(curtainHeight)
 {
+  for (size_t i = 0; i + 2 < constraintTriangleIndices.size(); i += 3) {
+    _constraintTriangles.insert(TriangleKey(constraintTriangleIndices[i],
+                                            constraintTriangleIndices[i + 1],
+                                            constraintTriangleIndices[i + 2]));
+  }
 }
 
 void CreateCurtainsVisitor::apply(osg::Geometry &geometry)
@@ -104,6 +116,7 @@ void CreateCurtainsVisitor::apply(osg::Geometry &geometry)
   findEdgesFunctor.vertices = vertices;
   findEdgesFunctor.normals = normals;
   findEdgesFunctor.texCoords = texCoords;
+  findEdgesFunctor.constraintTriangles = _constraintTriangles.empty() ? NULL : &_constraintTriangles;
   geometry.accept(findEdgesFunctor);
 
   if (findEdgesFunctor.primitives->getNumIndices() > 0)

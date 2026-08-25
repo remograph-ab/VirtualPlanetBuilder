@@ -82,7 +82,7 @@ void Commandline::computeGeoTransForRange(double xMin, double xMax, double yMin,
 }
 
 
-void Commandline::processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double& relativeHeight, bool lateral, const std::string& lineFilename)
+void Commandline::processFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double& relativeHeight, const bool &allLevels, const bool &lateral, const std::string& lineFilename)
 {
     if (filename.empty()) return;
 
@@ -107,7 +107,7 @@ void Commandline::processFile(vpb::Source::Type type, const std::string& filenam
             case(vpb::Source::IMAGE):           processImageOrHeightField(type, filename, layerOp); break;
             case(vpb::Source::HEIGHT_FIELD):    processImageOrHeightField(type, filename, layerOp); break;
             case(vpb::Source::MODEL):           processModel(filename, layerOp); break;
-            case(vpb::Source::SHAPEFILE):       processShapeFile(type, filename, layerOp, relativeHeight, lateral, lineFilename); break;
+            case(vpb::Source::SHAPEFILE):       processShapeFile(type, filename, layerOp, relativeHeight, allLevels, lateral, lineFilename); break;
         }
     }
     else
@@ -342,7 +342,7 @@ class ApplyUserDataToDrawables : public osg::NodeVisitor
         bool                                        _replace;
 };
 
-void Commandline::processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, double relativeHeight, bool lateral, const std::string& lineFilename)
+void Commandline::processShapeFile(vpb::Source::Type type, const std::string& filename, LayerOperation layerOp, const double &relativeHeight, const bool &allLevels, const bool &lateral, const std::string& lineFilename)
 {
     osg::ref_ptr<osgDB::ReaderWriter::Options> options = new osgDB::ReaderWriter::Options;
     options->setOptionString("double");
@@ -444,16 +444,14 @@ void Commandline::processShapeFile(vpb::Source::Type type, const std::string& fi
             model->addDescription(ostr.str());
         }
 
+        if (allLevels)
+            model->addDescription(std::string("AllLevels"));
+
         if (lateral)
-        {
             model->addDescription(std::string("Lateral"));
-        }
 
         if (!lineFilename.empty())
-        {
             model->addDescription(std::string("LineShapeFile ")+lineFilename);
-        }
-
 
         terrainTile->addChild(model.get());
     }
@@ -1381,14 +1379,16 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
                 std::stringstream lineStream(line);
                 std::string constraintsFilename;
                 double relativeHeight = 0.0;
+                std::string allLevelsString;
                 std::string lineShapeFilename;
-                lineStream >> constraintsFilename >> relativeHeight >> lineShapeFilename;
+                lineStream >> constraintsFilename >> relativeHeight >> allLevelsString >> lineShapeFilename;
                 if (constraintsFilename.empty()) continue;
                 typeAttribute = "Constraint";
+                bool allLevels = (allLevelsString == "1");
                 // A trailing line shape file enables lateral (road) flattening; without it the
                 // constraint is treated as a regular area constraint.
                 bool lateral = !lineShapeFilename.empty();
-                processFile(vpb::Source::SHAPEFILE, constraintsFilename, LayerOperation::CONSTRAINT, relativeHeight, lateral, lineShapeFilename);
+                processFile(vpb::Source::SHAPEFILE, constraintsFilename, LayerOperation::CONSTRAINT, relativeHeight, allLevels, lateral, lineShapeFilename);
             }
             reset();
         }

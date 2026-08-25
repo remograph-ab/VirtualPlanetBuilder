@@ -2949,19 +2949,23 @@ osg::Node* DestinationTile::createPolygonal()
         CDT::EdgeVec constraintEdges;
         std::vector<float> constraintHeights;
         ConstraintRings constraintRings;
-        if (_models.valid() && _level == _dataSet->getMaximumNumOfLevels() - 1) {
+        if (_models.valid()) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
                 itr != _models->_shapeFiles.end();
                 ++itr)
             {
                 osg::Node::DescriptionList &descriptions = (*itr)->getDescriptions();
                 bool isConstraint = false;
+                bool allLevels = false;
                 bool lateral = false;
                 float relativeHeight = 0.0f;
                 std::string lineShapeFile;
                 for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
                     if (*ditr == "CONSTRAINT") {
                         isConstraint = true;
+                    }
+                    else if (*ditr == "AllLevels") {
+                        allLevels = true;
                     }
                     else if (*ditr == "Lateral") {
                         lateral = true;
@@ -2973,7 +2977,7 @@ osg::Node* DestinationTile::createPolygonal()
                         lineShapeFile = ditr->substr(14);
                     }
                 }
-                if (isConstraint) {
+                if (isConstraint && (allLevels || _level == _dataSet->getMaximumNumOfLevels() - 1)) {
                     const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral, lineShapeFile);
                     buildTileConstraints(
                         rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
@@ -3514,8 +3518,8 @@ osg::Node* DestinationTile::createPolygonal()
     //addDebugTime("create geode", startTime);
     //startTime = osg::Timer::instance()->tick();
 
-    // Create curtains
-    CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength);
+    // Create curtains, skipping the triangles that belong to a constraint area
+    CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength, constraintTriangleIndices);
     geometry->accept(createCurtainsVisitor);
 
     //addDebugTime("create curtains", startTime);

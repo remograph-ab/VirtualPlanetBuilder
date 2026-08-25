@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <set>
 #include <vector>
 
 #include <osg/BoundingBox>
@@ -9,14 +11,40 @@
 namespace vpb
 {
 
+	// Order-independent identity of a triangle, so a triangle can be looked up regardless of
+	// which rotation/winding the triangle functor hands it over in.
+	struct TriangleKey
+	{
+	  TriangleKey(unsigned int a, unsigned int b, unsigned int c)
+	  {
+	    v[0] = a; v[1] = b; v[2] = c;
+	    std::sort(v, v + 3);
+	  }
+
+	  bool operator < (const TriangleKey &rhs) const
+	  {
+	    if (v[0] != rhs.v[0]) return v[0] < rhs.v[0];
+	    if (v[1] != rhs.v[1]) return v[1] < rhs.v[1];
+	    return v[2] < rhs.v[2];
+	  }
+
+	  unsigned int v[3];
+	};
+
 	class CreateCurtainsVisitor : public osg::NodeVisitor
 	{
 	public:
-	  CreateCurtainsVisitor(const osg::BoundingBox &bbox, const float &curtainHeight);
+	  // constraintTriangleIndices holds flattened triangle vertex indices (three per triangle) of
+	  // the triangles that lie within a shape file constraint area. No curtains are generated for
+	  // those triangles. Deliberately not defaulted, so omitting it cannot silently disable the
+	  // avoidance.
+	  CreateCurtainsVisitor(const osg::BoundingBox &bbox, const float &curtainHeight,
+	                        const std::vector<unsigned int> &constraintTriangleIndices);
 	  void apply(osg::Geometry &geometry);
 
 	private:
 	  osg::BoundingBox _bbox;
 	  float _curtainHeight;
+	  std::set<TriangleKey> _constraintTriangles;
 	};
 }
