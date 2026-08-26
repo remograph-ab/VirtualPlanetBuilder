@@ -93,9 +93,12 @@ namespace
 
     // True when the polygon edge (p0,p1) is crossed by, or almost touches, any road centerline
     // segment. A small tolerance relative to the edge length lets a centerline that merely
-    // grazes the edge still count as a cross-section (lateral).
+    // grazes the edge still count as a cross-section (lateral). On a match, matchedSegment
+    // is set to the index of the closest centerline segment, so the caller can step to a
+    // neighboring segment along the same road if sampling right at this crossing fails.
     bool edgeCrossedByLine(const osg::Vec3d &p0, const osg::Vec3d &p1,
-                           const std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments)
+                           const std::vector<std::pair<osg::Vec2d, osg::Vec2d> > &segments,
+                           size_t &matchedSegment)
     {
         osg::Vec2d e0(p0.x(), p0.y());
         osg::Vec2d e1(p1.x(), p1.y());
@@ -106,12 +109,19 @@ namespace
         double tolerance = edgeLength * kEdgeCrossToleranceFraction;
         double toleranceSq = tolerance * tolerance;
 
+        bool found = false;
+        double bestDistSq = 0.0;
         for (size_t s = 0; s < segments.size(); ++s)
         {
-            if (segmentSegmentDistanceSq(e0, e1, segments[s].first, segments[s].second) <= toleranceSq)
-                return true;
+            double distSq = segmentSegmentDistanceSq(e0, e1, segments[s].first, segments[s].second);
+            if (distSq <= toleranceSq && (!found || distSq < bestDistSq))
+            {
+                found = true;
+                bestDistSq = distSq;
+                matchedSegment = s;
+            }
         }
-        return false;
+        return found;
     }
 }
 
@@ -145,8 +155,12 @@ ElevationSampler::ElevationSampler(DataSet *dataSet, const osg::CoordinateSystem
     std::sort(sources.begin(), sources.end());
 
     _elevationSources.reserve(sources.size());
+    _elevationResolutions.reserve(sources.size());
     for (size_t i = 0; i < sources.size(); ++i)
+    {
         _elevationSources.push_back(sources[i].second);
+        _elevationResolutions.push_back(sources[i].first);
+    }
 }
 
 bool ElevationSampler::sample(double x, double y, float &height) const
@@ -161,6 +175,28 @@ bool ElevationSampler::sample(double x, double y, float &height) const
         {
             height = h;
             return true;
+        }
+    }
+
+    // No source covered the exact point; retry each source one pixel to the left, right,
+    // up and down, in case the point just missed the source's extents or a no-data cell.
+    for (size_t i = 0; i < _elevationSources.size(); ++i)
+    {
+        SourceData *sourceData = _elevationSources[i]->getSourceData();
+        if (!sourceData) continue;
+
+        double step = _elevationResolutions[i];
+        if (!(step > 0.0)) continue;
+
+        const double offsets[4][2] = { {-step, 0.0}, {step, 0.0}, {0.0, -step}, {0.0, step} };
+        for (int o = 0; o < 4; ++o)
+        {
+            float h = 0.0f;
+            if (sourceData->sampleElevation(_cs, _verticalScale, x + offsets[o][0], y + offsets[o][1], h))
+            {
+                height = h;
+                return true;
+            }
         }
     }
 
@@ -229,43 +265,81 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
             std::cout.precision(11);
 
             // Each edge crossed by the centerline is a cross-section: sample its midpoint once
-            // and give both endpoints that shared height.
+            // and give both endpoints that shared height. If that sample fails (e.g. the
+            // crossing sits right on a tile/raster border), step to the previous or next
+            // centerline segment along the same road and sample its midpoint instead.
             if (n >= 2)
             {
                 for (size_t k = 0; k < n; ++k)
                 {
                     size_t a = k;
                     size_t b = (k + 1) % n;
-                    if (edgeCrossedByLine(poly[a], poly[b], _lineSegments))
+                    size_t segIndex;
+                    if (!edgeCrossedByLine(poly[a], poly[b], _lineSegments, segIndex)) continue;
+
+                    double mx = 0.5 * (poly[a].x() + poly[b].x());
+                    double my = 0.5 * (poly[a].y() + poly[b].y());
+                    float z = 0.0f;
+                    bool found = _sampler && _sampler->sample(mx, my, z);
+
+                    if (!found && segIndex > 0)
                     {
-                        double mx = 0.5 * (poly[a].x() + poly[b].x());
-                        double my = 0.5 * (poly[a].y() + poly[b].y());
-                        float z = 0.0f;
-                        if (_sampler) _sampler->sample(mx, my, z);
+                        const osg::Vec2d &p0 = _lineSegments[segIndex - 1].first;
+                        const osg::Vec2d &p1 = _lineSegments[segIndex - 1].second;
+                        found = _sampler && _sampler->sample(0.5 * (p0.x() + p1.x()), 0.5 * (p0.y() + p1.y()), z);
+                    }
+                    if (!found && segIndex + 1 < _lineSegments.size())
+                    {
+                        const osg::Vec2d &p0 = _lineSegments[segIndex + 1].first;
+                        const osg::Vec2d &p1 = _lineSegments[segIndex + 1].second;
+                        found = _sampler && _sampler->sample(0.5 * (p0.x() + p1.x()), 0.5 * (p0.y() + p1.y()), z);
+                    }
+
+                    if (found)
+                    {
                         zsum[a] += z; ++zcount[a];
                         zsum[b] += z; ++zcount[b];
                     }
                 }
             }
 
+            // Raw per-vertex samples, kept separate from the final ring so a borrowed
+            // fallback below always comes from a genuinely sampled neighbor, never from
+            // another borrowed value (which would let failures propagate along the ring).
+            std::vector<double> zraw(n, 0.0);
+            std::vector<bool> zvalid(n, false);
             for (size_t k = 0; k < n; ++k)
             {
-                double z;
                 if (zcount[k] > 0)
                 {
-                    z = zsum[k] / (double)zcount[k];
+                    zraw[k] = zsum[k] / (double)zcount[k];
+                    zvalid[k] = true;
                 }
                 else
                 {
                     float pz = 0.0f;
-                    if (_sampler) _sampler->sample(poly[k].x(), poly[k].y(), pz);
-                    z = pz;
+                    zvalid[k] = _sampler && _sampler->sample(poly[k].x(), poly[k].y(), pz);
+                    zraw[k] = pz;
+                }
+            }
+
+            for (size_t k = 0; k < n; ++k)
+            {
+                double z = zraw[k];
+                if (!zvalid[k])
+                {
+                    // Borrow from whichever immediate neighbor was actually sampled.
+                    if (k > 0 && zvalid[k - 1]) z = zraw[k - 1];
+                    else if (k + 1 < n && zvalid[k + 1]) z = zraw[k + 1];
                 }
                 ring.push_back(osg::Vec3d(poly[k].x(), poly[k].y(), z));
             }
         }
         else
         {
+            std::vector<osg::Vec3d> verts;
+            std::vector<float> zraw;
+            std::vector<bool> zvalid;
             for (unsigned int i = 0; i < count; ++i)
             {
                 unsigned int index = i + first;
@@ -274,11 +348,26 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
                 osg::Vec3d vertex = (*vertices)[index];
 
                 // Sample the elevation from all available sources at the highest resolution.
-                // Points outside every source keep a 0.0 height, matching the terrain default.
                 float z = 0.0f;
-                if (_sampler) _sampler->sample(vertex.x(), vertex.y(), z);
+                bool valid = _sampler && _sampler->sample(vertex.x(), vertex.y(), z);
 
-                ring.push_back(osg::Vec3d(vertex.x(), vertex.y(), (double)z));
+                verts.push_back(vertex);
+                zraw.push_back(z);
+                zvalid.push_back(valid);
+            }
+
+            // A vertex whose direct sample failed borrows from whichever immediate neighbor
+            // was actually sampled (previous or next), never from another borrowed value.
+            size_t m = verts.size();
+            for (size_t k = 0; k < m; ++k)
+            {
+                double z = zraw[k];
+                if (!zvalid[k])
+                {
+                    if (k > 0 && zvalid[k - 1]) z = zraw[k - 1];
+                    else if (k + 1 < m && zvalid[k + 1]) z = zraw[k + 1];
+                }
+                ring.push_back(osg::Vec3d(verts[k].x(), verts[k].y(), z));
             }
         }
 

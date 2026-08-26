@@ -43,7 +43,9 @@ namespace vpb
 	public:
 		ElevationSampler(DataSet *dataSet, const osg::CoordinateSystemNode *cs);
 
-		/// Returns true and sets height if any source covers (x, y), otherwise false.
+		/// Returns true and sets height if any source covers (x, y), otherwise false. When no
+		/// source covers the exact point, falls back to trying the four neighboring points one
+		/// pixel to the left, right, up and down (using each source's own resolution).
 		bool sample(double x, double y, float &height) const;
 
 	private:
@@ -51,6 +53,7 @@ namespace vpb
 		const osg::CoordinateSystemNode *_cs;
 		double _verticalScale;
 		std::vector<Source *> _elevationSources; // finest resolution first
+		std::vector<double> _elevationResolutions; // pixel size, parallel to _elevationSources
 	};
 
 	/// Visits the geometry of a constraint shape file once and extracts world-space
