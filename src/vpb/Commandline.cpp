@@ -40,6 +40,7 @@ void Commandline::init()
     typeAttributeName = "NAME";
     heightAttributeName = "HGT";
     terrainmask = 0xffffffff;
+    constraintOrder = 0;
 
     reset();
 }
@@ -409,7 +410,12 @@ void Commandline::processShapeFile(vpb::Source::Type type, const std::string& fi
             model->addDescription(std::string("MODIFIED"));
             break;
         case CONSTRAINT:
-            model->addDescription(std::string("CONSTRAINT"));
+            {
+                model->addDescription(std::string("CONSTRAINT"));
+                std::stringstream ostr;
+                ostr<<"ConstraintOrder "<<constraintOrder++;
+                model->addDescription(ostr.str());
+            }
             break;
         default:
             break;

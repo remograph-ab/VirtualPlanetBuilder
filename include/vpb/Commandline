@@ -89,6 +89,10 @@ class VPB_EXPORT Commandline
         
         std::string heightAttributeName;
         double heightAttribute;
+
+        // Running index handed to each constraint shape file, preserving the order they are
+        // listed in the --constraints file. Not cleared by reset().
+        unsigned int constraintOrder;
 };
 
 }

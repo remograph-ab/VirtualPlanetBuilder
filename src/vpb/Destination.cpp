@@ -36,6 +36,7 @@
 
 #include <osgUtil/SmoothingVisitor>
 
+#include <algorithm>
 #include <cstdlib>
 #include <unordered_map>
 
@@ -2940,6 +2941,8 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<std::vector<std::vector<osg::Vec2> > > constraintGroupRings;
     std::vector<osg::Vec4> constraintGroupBounds;
     std::vector<std::vector<GLuint> > constraintGroupTriangles;
+    // Position of each group's shape file in the --constraints file, used to restore that order below.
+    std::vector<int> constraintGroupOrder;
 
     if (!regular) {
         // Constraints from shape files in best level. The world-space rings are built and
@@ -2959,6 +2962,7 @@ osg::Node* DestinationTile::createPolygonal()
                 bool allLevels = false;
                 bool lateral = false;
                 float relativeHeight = 0.0f;
+                int order = 0;
                 std::string lineShapeFile;
                 for (osg::Node::DescriptionList::iterator ditr = descriptions.begin(); ditr != descriptions.end(); ++ditr) {
                     if (*ditr == "CONSTRAINT") {
@@ -2972,6 +2976,9 @@ osg::Node* DestinationTile::createPolygonal()
                     }
                     else if (ditr->compare(0, 15, "RelativeHeight ") == 0) {
                         relativeHeight = (float)atof(ditr->c_str() + 15);
+                    }
+                    else if (ditr->compare(0, 16, "ConstraintOrder ") == 0) {
+                        order = atoi(ditr->c_str() + 16);
                     }
                     else if (ditr->compare(0, 14, "LineShapeFile ") == 0) {
                         lineShapeFile = ditr->substr(14);
@@ -2996,9 +3003,36 @@ osg::Node* DestinationTile::createPolygonal()
                         constraintGroupRings.push_back(groupRings);
                         constraintGroupBounds.push_back(ringsBounds(groupRings));
                         constraintGroupTriangles.push_back(std::vector<GLuint>());
+                        constraintGroupOrder.push_back(order);
                     }
                 }
             }
+        }
+
+        // Shape files reach us in source graph order, which is sorted by resolution and says
+        // nothing about the constraints file. Re-sort the groups by their listed position so
+        // that, where two constraint areas overlap, the one listed last wins (the interior
+        // triangles go to its Geode) - see constraintGroupForPoint().
+        if (constraintGroupOrder.size() > 1) {
+            std::vector<size_t> permutation(constraintGroupOrder.size());
+            for (size_t g = 0; g < permutation.size(); ++g) permutation[g] = g;
+            std::stable_sort(permutation.begin(), permutation.end(),
+                [&constraintGroupOrder](size_t a, size_t b) { return constraintGroupOrder[a] < constraintGroupOrder[b]; });
+
+            std::vector<std::string> sortedNames;
+            std::vector<std::vector<std::vector<osg::Vec2> > > sortedRings;
+            std::vector<osg::Vec4> sortedBounds;
+            sortedNames.reserve(permutation.size());
+            sortedRings.reserve(permutation.size());
+            sortedBounds.reserve(permutation.size());
+            for (size_t g = 0; g < permutation.size(); ++g) {
+                sortedNames.push_back(constraintGroupNames[permutation[g]]);
+                sortedRings.push_back(constraintGroupRings[permutation[g]]);
+                sortedBounds.push_back(constraintGroupBounds[permutation[g]]);
+            }
+            constraintGroupNames.swap(sortedNames);
+            constraintGroupRings.swap(sortedRings);
+            constraintGroupBounds.swap(sortedBounds);
         }
 
         // Merge constraint vertices coinciding between different shapes into a single shared
