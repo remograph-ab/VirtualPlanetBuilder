@@ -2427,6 +2427,34 @@ static inline osg::Vec3 computeLocalSkirtVector(const osg::EllipsoidModel* et, c
     return gravitationVector * -length;
 }
 
+// Inverse of the transform applied when the constraint vertices were built, so a triangulation
+// vertex can be reported in the coordinate system the source data was given in.
+static osg::Vec3d computeGlobalConstraintPosition(
+    const std::vector<CDT::V2d<float> > &vertices,
+    const std::vector<float> &heights,
+    CDT::VertInd index,
+    const osg::EllipsoidModel* et,
+    bool mapLatLongsToXYZ,
+    bool useLocalToTileTransform,
+    const osg::Matrixd& localToWorld)
+{
+    if (index >= vertices.size()) return osg::Vec3d(0.0, 0.0, 0.0);
+
+    const CDT::V2d<float> &v = vertices[index];
+    osg::Vec3d pos(v.x, v.y, index < heights.size() ? heights[index] : 0.0f);
+
+    if (useLocalToTileTransform) pos = pos * localToWorld;
+
+    if (mapLatLongsToXYZ && et)
+    {
+        double latitude, longitude, height;
+        et->convertXYZToLatLongHeight(pos.x(), pos.y(), pos.z(), latitude, longitude, height);
+        pos.set(osg::RadiansToDegrees(longitude), osg::RadiansToDegrees(latitude), height);
+    }
+
+    return pos;
+}
+
 namespace
 {
     inline int ringWindingNumber(float x, float y, const std::vector<osg::Vec2> &ring);
@@ -3149,6 +3177,22 @@ osg::Node* DestinationTile::createPolygonal()
                 delaunayTriangulation.insertVertices(cdtVertices);
                 delaunayTriangulation.insertEdges(constraintEdges);
                 delaunayTriangulation.eraseSuperTriangle();
+            }
+            catch (const CDT::IntersectingConstraintsError &ex) {
+                const CDT::Edge &e1 = ex.e1();
+                const CDT::Edge &e2 = ex.e2();
+                osg::Vec3d e1v1 = computeGlobalConstraintPosition(constraintVertices, constraintHeights, e1.v1(), et, mapLatLongsToXYZ, useLocalToTileTransform, _localToWorld);
+                osg::Vec3d e1v2 = computeGlobalConstraintPosition(constraintVertices, constraintHeights, e1.v2(), et, mapLatLongsToXYZ, useLocalToTileTransform, _localToWorld);
+                osg::Vec3d e2v1 = computeGlobalConstraintPosition(constraintVertices, constraintHeights, e2.v1(), et, mapLatLongsToXYZ, useLocalToTileTransform, _localToWorld);
+                osg::Vec3d e2v2 = computeGlobalConstraintPosition(constraintVertices, constraintHeights, e2.v2(), et, mapLatLongsToXYZ, useLocalToTileTransform, _localToWorld);
+
+                log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex.what());
+                log(osg::WARN, "       intersecting constraint edges at (%.9f %.9f %.9f - %.9f %.9f %.9f) and (%.9f %.9f %.9f - %.9f %.9f %.9f)",
+                    e1v1.x(), e1v1.y(), e1v1.z(), e1v2.x(), e1v2.y(), e1v2.z(),
+                    e2v1.x(), e2v1.y(), e2v1.z(), e2v2.x(), e2v2.y(), e2v2.z());
+
+                delaunaySucceeded = false;
+                break;
             }
             catch (std::exception &ex) {
                 log(osg::WARN, "ERROR: Delaunay triangulation failed: %s", ex.what());

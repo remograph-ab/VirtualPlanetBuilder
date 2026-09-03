@@ -547,11 +547,8 @@ void Triangulation<T, TNearPointLocator>::insertEdgeIteration(
                 e2 = Edge(
                     VertInd(e2.v1() - m_nTargetVerts),
                     VertInd(e2.v2() - m_nTargetVerts));
-                handleException(IntersectingConstraintsError(
-                    e1,
-                    pieceToOriginals.count(e2) ? pieceToOriginals.at(e2).front()
-                                               : e2,
-                    CDT_SOURCE_LOCATION));
+                handleException(
+                    IntersectingConstraintsError(e1, e2, CDT_SOURCE_LOCATION));
             }
             break;
         case IntersectingConstraintEdges::TryResolve:
