@@ -3356,7 +3356,7 @@ osg::Node* DestinationTile::createPolygonal()
     if (!delaunaySucceeded) {
         // Failed or skipped delaunay, fallback to regular mesh
         if (maximumError > 0.0)
-            std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, gave up at error " << currentError << " / max " << maximumError << ". Fallback to regular mesh!" << std::endl;
+            std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, gave up at error " << currentError << " / max " << maximumError << ". Fallback to regular mesh!" << std::endl << std::endl;
 
         triangulatedVertices = origVertices;
         geometry->setVertexArray(triangulatedVertices);
@@ -3364,9 +3364,8 @@ osg::Node* DestinationTile::createPolygonal()
         unsigned int numPrims = geometry->getNumPrimitiveSets();
         if (numPrims > 0)
             geometry->removePrimitiveSet(0, numPrims);
-        // Classify fallback grid triangles the same way as the Delaunay path. The full mesh is
-        // drawn as a single primitive set here; the constraint triangles are split into their own
-        // Geode once the mesh is finalized below.
+        // Fallback grid triangles are all kept as regular terrain in a single node: the
+        // constraint classification below is disabled on purpose.
         terrainTriangleIndices.clear();
         constraintTriangleIndices.clear();
         for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
@@ -3400,26 +3399,26 @@ osg::Node* DestinationTile::createPolygonal()
 
                 for (int ti = 0; ti < 2; ++ti)
                 {
-                    const osg::Vec3& p0 = (*triangulatedVertices)[triangles[ti][0]];
-                    const osg::Vec3& p1 = (*triangulatedVertices)[triangles[ti][1]];
-                    const osg::Vec3& p2 = (*triangulatedVertices)[triangles[ti][2]];
-                    float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
-                    float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
+                    //const osg::Vec3& p0 = (*triangulatedVertices)[triangles[ti][0]];
+                    //const osg::Vec3& p1 = (*triangulatedVertices)[triangles[ti][1]];
+                    //const osg::Vec3& p2 = (*triangulatedVertices)[triangles[ti][2]];
+                    //float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
+                    //float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
 
-                    int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
-                    if (group >= 0) {
-                        constraintGroupTriangles[group].push_back(triangles[ti][0]);
-                        constraintGroupTriangles[group].push_back(triangles[ti][1]);
-                        constraintGroupTriangles[group].push_back(triangles[ti][2]);
-                        constraintTriangleIndices.push_back(triangles[ti][0]);
-                        constraintTriangleIndices.push_back(triangles[ti][1]);
-                        constraintTriangleIndices.push_back(triangles[ti][2]);
-                    }
-                    else {
+                    //int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
+                    //if (group >= 0) {
+                    //    constraintGroupTriangles[group].push_back(triangles[ti][0]);
+                    //    constraintGroupTriangles[group].push_back(triangles[ti][1]);
+                    //    constraintGroupTriangles[group].push_back(triangles[ti][2]);
+                    //    constraintTriangleIndices.push_back(triangles[ti][0]);
+                    //    constraintTriangleIndices.push_back(triangles[ti][1]);
+                    //    constraintTriangleIndices.push_back(triangles[ti][2]);
+                    //}
+                    //else {
                         terrainTriangleIndices.push_back(triangles[ti][0]);
                         terrainTriangleIndices.push_back(triangles[ti][1]);
                         terrainTriangleIndices.push_back(triangles[ti][2]);
-                    }
+                    //}
                 }
             }
         }
@@ -3596,6 +3595,10 @@ osg::Node* DestinationTile::createPolygonal()
     //addDebugTime("create geode", startTime);
     //startTime = osg::Timer::instance()->tick();
 
+    // Kept so the mesh triangle set can be told apart from the curtain skirt set added below.
+    osg::ref_ptr<osg::PrimitiveSet> meshPrimitiveSet =
+        geometry->getNumPrimitiveSets() > 0 ? geometry->getPrimitiveSet(0) : NULL;
+
     // Create curtains, skipping the triangles that belong to a constraint area
     CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength, constraintTriangleIndices);
     geometry->accept(createCurtainsVisitor);
@@ -3613,15 +3616,14 @@ osg::Node* DestinationTile::createPolygonal()
     if (!constraintTriangleIndices.empty())
     {
         // Drop the combined terrain+constraint triangle set from the terrain geometry, leaving
-        // the curtain skirt (a DrawElementsUShort) in place, then re-add the non-constraint
-        // triangles only.
-        for (unsigned int pi = 0; pi < geometry->getNumPrimitiveSets(); )
+        // the curtain skirt in place, then re-add the non-constraint triangles only.
+        for (unsigned int pi = 0; pi < geometry->getNumPrimitiveSets(); ++pi)
         {
-            osg::DrawElementsUInt* de = dynamic_cast<osg::DrawElementsUInt*>(geometry->getPrimitiveSet(pi));
-            if (de && de->getMode() == GL_TRIANGLES)
+            if (geometry->getPrimitiveSet(pi) == meshPrimitiveSet.get())
+            {
                 geometry->removePrimitiveSet(pi);
-            else
-                ++pi;
+                break;
+            }
         }
         if (!terrainTriangleIndices.empty())
             geometry->addPrimitiveSet(new osg::DrawElementsUInt(GL_TRIANGLES, terrainTriangleIndices.size(), &(terrainTriangleIndices.front())));

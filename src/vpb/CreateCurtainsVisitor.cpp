@@ -17,7 +17,8 @@ struct FindEdgesFunctor
   : vertices(NULL)
   , normals(NULL)
   , texCoords(NULL)
-  , primitives(new osg::DrawElementsUShort(osg::PrimitiveSet::TRIANGLES))
+  // 32-bit indices: a regular (non-simplified) tile mesh easily exceeds 65535 vertices.
+  , primitives(new osg::DrawElementsUInt(osg::PrimitiveSet::TRIANGLES))
   , curtainHeight(1.0f)
   , constraintTriangles(NULL)
   {
@@ -78,7 +79,7 @@ struct FindEdgesFunctor
   osg::Vec3Array *vertices;
   osg::Vec3Array *normals;
   osg::Vec2Array *texCoords;
-  osg::DrawElementsUShort *primitives;
+  osg::DrawElementsUInt *primitives;
   float curtainHeight;
   const std::set<TriangleKey> *constraintTriangles;
 };
