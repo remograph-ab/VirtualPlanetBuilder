@@ -1255,16 +1255,75 @@ void vpb::splitIntersectingConstraintEdges(
                 const Seg &si = segs[i];
                 const Seg &sj = segs[j];
 
+                // Split an edge when an existing endpoint lies in its interior. Reusing the
+                // endpoint gives a T-junction valid shared topology instead of moving either
+                // constraint away from its intended position. This also handles collinear
+                // partial overlaps after their endpoints have divided the overlapping spans.
+                bool endpointTouch = false;
+                double siLen2 = si.dx * si.dx + si.dy * si.dy;
+                if (siLen2 > 0.0)
+                {
+                    double siLen = std::sqrt(siLen2);
+                    const unsigned int jVertices[2] = {edges[j].v1(), edges[j].v2()};
+                    for (unsigned int endpoint = 0; endpoint < 2; ++endpoint)
+                    {
+                        unsigned int vertex = jVertices[endpoint];
+                        const CDT::V2d<float> &P = vertices[vertex];
+                        double t = (((double)P.x - si.ax) * si.dx + ((double)P.y - si.ay) * si.dy) / siLen2;
+                        double touchTol = std::max(siLen * 1.0e-6,
+                            std::max(1.0, std::max(std::fabs((double)P.x), std::fabs((double)P.y))) *
+                            (double)FLT_EPSILON * 4.0);
+                        double endTolT = touchTol / siLen;
+                        if (t <= endTolT || t >= 1.0 - endTolT) continue;
+
+                        double projx = si.ax + t * si.dx;
+                        double projy = si.ay + t * si.dy;
+                        double ddx = (double)P.x - projx;
+                        double ddy = (double)P.y - projy;
+                        if (ddx * ddx + ddy * ddy > touchTol * touchTol) continue;
+
+                        splits[i].push_back(std::make_pair(t, vertex));
+                        endpointTouch = true;
+                    }
+                }
+
+                double sjLen2 = sj.dx * sj.dx + sj.dy * sj.dy;
+                if (sjLen2 > 0.0)
+                {
+                    double sjLen = std::sqrt(sjLen2);
+                    const unsigned int iVertices[2] = {edges[i].v1(), edges[i].v2()};
+                    for (unsigned int endpoint = 0; endpoint < 2; ++endpoint)
+                    {
+                        unsigned int vertex = iVertices[endpoint];
+                        const CDT::V2d<float> &P = vertices[vertex];
+                        double u = (((double)P.x - sj.ax) * sj.dx + ((double)P.y - sj.ay) * sj.dy) / sjLen2;
+                        double touchTol = std::max(sjLen * 1.0e-6,
+                            std::max(1.0, std::max(std::fabs((double)P.x), std::fabs((double)P.y))) *
+                            (double)FLT_EPSILON * 4.0);
+                        double endTolT = touchTol / sjLen;
+                        if (u <= endTolT || u >= 1.0 - endTolT) continue;
+
+                        double projx = sj.ax + u * sj.dx;
+                        double projy = sj.ay + u * sj.dy;
+                        double ddx = (double)P.x - projx;
+                        double ddy = (double)P.y - projy;
+                        if (ddx * ddx + ddy * ddy > touchTol * touchTol) continue;
+
+                        splits[j].push_back(std::make_pair(u, vertex));
+                        endpointTouch = true;
+                    }
+                }
+                if (endpointTouch) continue;
+
                 double denom = si.dx * sj.dy - si.dy * sj.dx;
-                if (denom == 0.0) continue; // parallel or collinear: handled elsewhere
+                if (denom == 0.0) continue; // parallel or collinear without an endpoint touch
 
                 double wx = sj.ax - si.ax;
                 double wy = sj.ay - si.ay;
                 double t = (wx * sj.dy - wy * sj.dx) / denom; // along edge i
                 double u = (wx * si.dy - wy * si.dx) / denom; // along edge j
 
-                // Only split where the segments cross strictly in their interiors; endpoint
-                // touches (T-junctions, shared corners) are left for the other passes.
+                // Endpoint touches were handled above, so only proper crossings remain here.
                 const double EPS = 1e-7;
                 if (t <= EPS || t >= 1.0 - EPS || u <= EPS || u >= 1.0 - EPS) continue;
 

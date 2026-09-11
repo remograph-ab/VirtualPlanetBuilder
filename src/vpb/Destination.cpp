@@ -35,6 +35,7 @@
 #include <osgDB/FileNameUtils>
 
 #include <osgUtil/SmoothingVisitor>
+#include <osgUtil/Simplifier>
 
 #include <algorithm>
 #include <cstdlib>
@@ -2568,6 +2569,168 @@ namespace
         vertices.swap(keptVertices);
         heights.swap(keptHeights);
     }
+
+    // Position of a border vertex along the perimeter of the grid rectangle
+    // [minC,maxC]x[minR,maxR], measured in grid units counter-clockwise from the lower left corner.
+    inline float ringPerimeterPosition(
+        unsigned int r, unsigned int c,
+        unsigned int minC, unsigned int maxC,
+        unsigned int minR, unsigned int maxR)
+    {
+        float w = float(maxC - minC);
+        float h = float(maxR - minR);
+        if (r == minR) return float(c - minC);
+        if (c == maxC) return w + float(r - minR);
+        if (r == maxR) return w + h + float(maxC - c);
+        return 2.0f * w + h + float(maxR - r);
+    }
+
+    // Builds the fallback grid mesh using the Ramer-Douglas-Peucker reduced borders instead of the
+    // full border rows/columns: the interior keeps the regular grid, and the band between the
+    // reduced outer ring and the first interior ring is stitched by walking both rings in
+    // perimeter order. Vertices are compacted so the dropped border vertices leave no orphans
+    // behind (the simplifier would choke on protected points that no triangle references).
+    // The kept outer ring vertices are reported in outProtectedPoints.
+    // Returns false when the grid is too small to have an interior ring.
+    inline bool buildReducedBorderGrid(
+        const osg::Vec3Array &gridVertices,
+        unsigned int numColumns, unsigned int numRows,
+        const std::vector<unsigned int> &bottomColumns,
+        const std::vector<unsigned int> &rightRows,
+        const std::vector<unsigned int> &topColumns,
+        const std::vector<unsigned int> &leftRows,
+        osg::Vec3Array &outVertices,
+        std::vector<GLuint> &outTriangles,
+        osgUtil::Simplifier::IndexList &outProtectedPoints)
+    {
+        if (numColumns < 4 || numRows < 4) return false;
+        if (gridVertices.size() < size_t(numColumns) * size_t(numRows)) return false;
+
+        const unsigned int minC = 1, maxC = numColumns - 2;
+        const unsigned int minR = 1, maxR = numRows - 2;
+
+        std::vector<int> remap(gridVertices.size(), -1);
+        outVertices.reserve(gridVertices.size());
+        auto addVertex = [&](unsigned int gridIdx) -> GLuint {
+            int &mapped = remap[gridIdx];
+            if (mapped < 0) {
+                mapped = (int)outVertices.size();
+                outVertices.push_back(gridVertices[gridIdx]);
+            }
+            return (GLuint)mapped;
+        };
+
+        // Outer ring, counter-clockwise from the lower left corner. The four corners are added
+        // explicitly so the ring stays closed even if a reduced border list dropped an endpoint.
+        std::vector<GLuint> outerRing;
+        std::vector<float> outerT;
+        float outerPerimeter = 2.0f * float((numColumns - 1) + (numRows - 1));
+        auto addOuter = [&](unsigned int r, unsigned int c) {
+            outerRing.push_back(addVertex(r * numColumns + c));
+            outerT.push_back(ringPerimeterPosition(r, c, 0, numColumns - 1, 0, numRows - 1) / outerPerimeter);
+        };
+
+        addOuter(0, 0);
+        for (size_t i = 0; i < bottomColumns.size(); ++i) {
+            unsigned int c = bottomColumns[i];
+            if (c > 0 && c < numColumns - 1) addOuter(0, c);
+        }
+        addOuter(0, numColumns - 1);
+        for (size_t i = 0; i < rightRows.size(); ++i) {
+            unsigned int r = rightRows[i];
+            if (r > 0 && r < numRows - 1) addOuter(r, numColumns - 1);
+        }
+        addOuter(numRows - 1, numColumns - 1);
+        for (size_t i = topColumns.size(); i > 0; --i) {
+            unsigned int c = topColumns[i - 1];
+            if (c > 0 && c < numColumns - 1) addOuter(numRows - 1, c);
+        }
+        addOuter(numRows - 1, 0);
+        for (size_t i = leftRows.size(); i > 0; --i) {
+            unsigned int r = leftRows[i - 1];
+            if (r > 0 && r < numRows - 1) addOuter(r, 0);
+        }
+
+        // Inner ring: the complete first interior rectangle, same orientation and start corner.
+        std::vector<GLuint> innerRing;
+        std::vector<float> innerT;
+        float innerPerimeter = 2.0f * float((maxC - minC) + (maxR - minR));
+        auto addInner = [&](unsigned int r, unsigned int c) {
+            innerRing.push_back(addVertex(r * numColumns + c));
+            innerT.push_back(ringPerimeterPosition(r, c, minC, maxC, minR, maxR) / innerPerimeter);
+        };
+
+        for (unsigned int c = minC; c <= maxC; ++c) addInner(minR, c);
+        for (unsigned int r = minR + 1; r <= maxR; ++r) addInner(r, maxC);
+        for (unsigned int c = maxC; c > minC; --c) addInner(maxR, c - 1);
+        for (unsigned int r = maxR; r > minR + 1; --r) addInner(r - 1, minC);
+
+        if (outerRing.size() < 3 || innerRing.size() < 3) return false;
+
+        // Regular grid over the interior, keeping the original shortest-diagonal choice.
+        for (unsigned int r = minR; r < maxR; ++r) {
+            for (unsigned int c = minC; c < maxC; ++c) {
+                unsigned int i00 = r * numColumns + c;
+                unsigned int i10 = r * numColumns + c + 1;
+                unsigned int i01 = (r + 1) * numColumns + c;
+                unsigned int i11 = (r + 1) * numColumns + c + 1;
+
+                float diff_00_11 = fabsf(gridVertices[i00].z() - gridVertices[i11].z());
+                float diff_01_10 = fabsf(gridVertices[i01].z() - gridVertices[i10].z());
+
+                GLuint v00 = addVertex(i00);
+                GLuint v10 = addVertex(i10);
+                GLuint v01 = addVertex(i01);
+                GLuint v11 = addVertex(i11);
+
+                if (diff_00_11 < diff_01_10) {
+                    outTriangles.push_back(v00); outTriangles.push_back(v10); outTriangles.push_back(v11);
+                    outTriangles.push_back(v00); outTriangles.push_back(v11); outTriangles.push_back(v01);
+                }
+                else {
+                    outTriangles.push_back(v01); outTriangles.push_back(v00); outTriangles.push_back(v10);
+                    outTriangles.push_back(v01); outTriangles.push_back(v10); outTriangles.push_back(v11);
+                }
+            }
+        }
+
+        // Stitch the band between the two rings, always advancing the ring whose next vertex comes
+        // first along the shared perimeter parameter.
+        size_t numOuter = outerRing.size();
+        size_t numInner = innerRing.size();
+        size_t oi = 0, ii = 0;
+        while (oi < numOuter || ii < numInner) {
+            bool advanceOuter;
+            if (oi >= numOuter) {
+                advanceOuter = false;
+            }
+            else if (ii >= numInner) {
+                advanceOuter = true;
+            }
+            else {
+                float nextOuter = (oi + 1 < numOuter) ? outerT[oi + 1] : 1.0f;
+                float nextInner = (ii + 1 < numInner) ? innerT[ii + 1] : 1.0f;
+                advanceOuter = (nextOuter <= nextInner);
+            }
+
+            if (advanceOuter) {
+                outTriangles.push_back(outerRing[oi]);
+                outTriangles.push_back(outerRing[(oi + 1) % numOuter]);
+                outTriangles.push_back(innerRing[ii % numInner]);
+                ++oi;
+            }
+            else {
+                outTriangles.push_back(outerRing[oi % numOuter]);
+                outTriangles.push_back(innerRing[(ii + 1) % numInner]);
+                outTriangles.push_back(innerRing[ii % numInner]);
+                ++ii;
+            }
+        }
+
+        outProtectedPoints.insert(outProtectedPoints.end(), outerRing.begin(), outerRing.end());
+
+        return true;
+    }
 }
 
 osg::Node* DestinationTile::createPolygonal()
@@ -2961,6 +3124,10 @@ osg::Node* DestinationTile::createPolygonal()
     std::vector<GLuint> terrainTriangleIndices;
     std::vector<GLuint> constraintTriangleIndices;
 
+    // Border points the simplifier must not move (it would open cracks against neighboring tiles).
+    // Only used by the fallback grid path, which is the only one that gets simplified.
+    osgUtil::Simplifier::IndexList pointsToProtectDuringSimplification;
+
     // One entry per constraint shape file contributing rings to this tile: the shape file's
     // simple file name, its rings in tile-local coordinates, and the triangle indices whose
     // centroid falls inside those rings. Each non-empty group becomes its own Geode named after
@@ -3063,25 +3230,6 @@ osg::Node* DestinationTile::createPolygonal()
             constraintGroupBounds.swap(sortedBounds);
         }
 
-        // Merge constraint vertices coinciding between different shapes into a single shared
-        // vertex (remapping edges) so the triangulation does not receive duplicate points.
-        mergeDuplicateConstraintVertices(constraintVertices, constraintEdges, constraintHeights);
-
-        // Drop constraint edges completely covered edge-on by another collinear edge (e.g.
-        // shared boundaries between neighboring constraint areas) to avoid the constrained
-        // Delaunay triangulation reporting self-intersecting constraints.
-        removeCoveredConstraintEdges(constraintVertices, constraintEdges);
-
-        // Split constraint edges that cross each other in their interiors (e.g. a road shape
-        // crossing a model hull shape) at the intersection points, so crossing constraints from
-        // different shapes no longer trip the triangulation's intersecting-constraints check.
-        splitIntersectingConstraintEdges(constraintVertices, constraintEdges, constraintHeights);
-
-        // Push apart constraint vertices that touch the interior of another constraint edge
-        // (T-junctions left behind by the removal above), so the triangulation no longer sees
-        // them as intersecting constraints.
-        separateTouchingConstraintVertices(constraintVertices, constraintEdges);
-
         // Transform the shape-file constraint rings into this tile's local coordinate system so
         // the worst-point search can skip height-field samples that fall inside a constraint
         // area. The tile border constraints are deliberately not part of constraintRings, so
@@ -3126,6 +3274,14 @@ osg::Node* DestinationTile::createPolygonal()
         constraintHeights.insert(constraintHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
         constraintHeights.insert(constraintHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
         constraintHeights.insert(constraintHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
+
+        // Sanitize the complete graph, including the tile border. Clipped shape constraints
+        // commonly end in the interior of a border edge and must split that edge at the shared
+        // endpoint before CDT receives it.
+        mergeDuplicateConstraintVertices(constraintVertices, constraintEdges, constraintHeights);
+        removeCoveredConstraintEdges(constraintVertices, constraintEdges);
+        splitIntersectingConstraintEdges(constraintVertices, constraintEdges, constraintHeights);
+        separateTouchingConstraintVertices(constraintVertices, constraintEdges);
 
         //addDebugTime("border heights", startTime);
         //startTime = osg::Timer::instance()->tick();
@@ -3358,8 +3514,6 @@ osg::Node* DestinationTile::createPolygonal()
         if (maximumError > 0.0)
             std::cerr << std::endl << "WARNING: Failed performing Delaunay triangulation, gave up at error " << currentError << " / max " << maximumError << ". Fallback to regular mesh!" << std::endl << std::endl;
 
-        triangulatedVertices = origVertices;
-        geometry->setVertexArray(triangulatedVertices);
         // Drop any primitive set left over from an aborted Delaunay loop, it indexes the discarded vertex array
         unsigned int numPrims = geometry->getNumPrimitiveSets();
         if (numPrims > 0)
@@ -3370,58 +3524,97 @@ osg::Node* DestinationTile::createPolygonal()
         constraintTriangleIndices.clear();
         for (size_t g = 0; g < constraintGroupTriangles.size(); ++g)
             constraintGroupTriangles[g].clear();
-        terrainTriangleIndices.reserve(2*3*(numColumns-1)*(numRows-1));
-        for(r=0;r<numRows-1;++r)
+        pointsToProtectDuringSimplification.clear();
+
+        // This mesh gets simplified below (same condition), so reuse the Ramer-Douglas-Peucker
+        // reduced borders computed for the Delaunay path rather than the full border rows/columns.
+        bool reducedBorders = false;
+        if (!regular && _dataSet->getSimplifyTerrain() && maximumError > 0.0 &&
+            !(simplifiedBottomColumns.empty() && simplifiedRightRows.empty() &&
+              simplifiedTopRows.empty() && simplifiedLeftRows.empty()))
         {
-            for(c=0;c<numColumns-1;++c)
-            {
-                unsigned int i00 = (r)*numColumns+c;
-                unsigned int i10 = (r)*numColumns+c+1;
-                unsigned int i01 = (r+1)*numColumns+c;
-                unsigned int i11 = (r+1)*numColumns+c+1;
-
-                float diff_00_11 = fabsf((*triangulatedVertices)[i00].z()-(*triangulatedVertices)[i11].z());
-                float diff_01_10 = fabsf((*triangulatedVertices)[i01].z()-(*triangulatedVertices)[i10].z());
-
-                unsigned int triangles[2][3];
-                if (diff_00_11<diff_01_10)
-                {
-                    // diagonal between 00 and 11
-                    triangles[0][0] = i00; triangles[0][1] = i10; triangles[0][2] = i11;
-                    triangles[1][0] = i00; triangles[1][1] = i11; triangles[1][2] = i01;
-                }
-                else
-                {
-                    // diagonal between 01 and 10
-                    triangles[0][0] = i01; triangles[0][1] = i00; triangles[0][2] = i10;
-                    triangles[1][0] = i01; triangles[1][1] = i10; triangles[1][2] = i11;
-                }
-
-                for (int ti = 0; ti < 2; ++ti)
-                {
-                    //const osg::Vec3& p0 = (*triangulatedVertices)[triangles[ti][0]];
-                    //const osg::Vec3& p1 = (*triangulatedVertices)[triangles[ti][1]];
-                    //const osg::Vec3& p2 = (*triangulatedVertices)[triangles[ti][2]];
-                    //float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
-                    //float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
-
-                    //int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
-                    //if (group >= 0) {
-                    //    constraintGroupTriangles[group].push_back(triangles[ti][0]);
-                    //    constraintGroupTriangles[group].push_back(triangles[ti][1]);
-                    //    constraintGroupTriangles[group].push_back(triangles[ti][2]);
-                    //    constraintTriangleIndices.push_back(triangles[ti][0]);
-                    //    constraintTriangleIndices.push_back(triangles[ti][1]);
-                    //    constraintTriangleIndices.push_back(triangles[ti][2]);
-                    //}
-                    //else {
-                        terrainTriangleIndices.push_back(triangles[ti][0]);
-                        terrainTriangleIndices.push_back(triangles[ti][1]);
-                        terrainTriangleIndices.push_back(triangles[ti][2]);
-                    //}
-                }
+            osg::ref_ptr<osg::Vec3Array> reducedBorderVertices = new osg::Vec3Array;
+            reducedBorders = buildReducedBorderGrid(
+                *origVertices, numColumns, numRows,
+                simplifiedBottomColumns, simplifiedRightRows, simplifiedTopRows, simplifiedLeftRows,
+                *reducedBorderVertices, terrainTriangleIndices, pointsToProtectDuringSimplification
+            );
+            if (reducedBorders) {
+                triangulatedVertices = reducedBorderVertices;
+            }
+            else {
+                terrainTriangleIndices.clear();
+                pointsToProtectDuringSimplification.clear();
             }
         }
+
+        if (!reducedBorders) {
+            triangulatedVertices = origVertices;
+            terrainTriangleIndices.reserve(2*3*(numColumns-1)*(numRows-1));
+            for(r=0;r<numRows-1;++r)
+            {
+                for(c=0;c<numColumns-1;++c)
+                {
+                    unsigned int i00 = (r)*numColumns+c;
+                    unsigned int i10 = (r)*numColumns+c+1;
+                    unsigned int i01 = (r+1)*numColumns+c;
+                    unsigned int i11 = (r+1)*numColumns+c+1;
+
+                    float diff_00_11 = fabsf((*triangulatedVertices)[i00].z()-(*triangulatedVertices)[i11].z());
+                    float diff_01_10 = fabsf((*triangulatedVertices)[i01].z()-(*triangulatedVertices)[i10].z());
+
+                    unsigned int triangles[2][3];
+                    if (diff_00_11<diff_01_10)
+                    {
+                        // diagonal between 00 and 11
+                        triangles[0][0] = i00; triangles[0][1] = i10; triangles[0][2] = i11;
+                        triangles[1][0] = i00; triangles[1][1] = i11; triangles[1][2] = i01;
+                    }
+                    else
+                    {
+                        // diagonal between 01 and 10
+                        triangles[0][0] = i01; triangles[0][1] = i00; triangles[0][2] = i10;
+                        triangles[1][0] = i01; triangles[1][1] = i10; triangles[1][2] = i11;
+                    }
+
+                    for (int ti = 0; ti < 2; ++ti)
+                    {
+                        //const osg::Vec3& p0 = (*triangulatedVertices)[triangles[ti][0]];
+                        //const osg::Vec3& p1 = (*triangulatedVertices)[triangles[ti][1]];
+                        //const osg::Vec3& p2 = (*triangulatedVertices)[triangles[ti][2]];
+                        //float cx = (p0.x() + p1.x() + p2.x()) / 3.0f;
+                        //float cy = (p0.y() + p1.y() + p2.y()) / 3.0f;
+
+                        //int group = constraintGroupForPoint(cx, cy, constraintGroupRings, constraintGroupBounds);
+                        //if (group >= 0) {
+                        //    constraintGroupTriangles[group].push_back(triangles[ti][0]);
+                        //    constraintGroupTriangles[group].push_back(triangles[ti][1]);
+                        //    constraintGroupTriangles[group].push_back(triangles[ti][2]);
+                        //    constraintTriangleIndices.push_back(triangles[ti][0]);
+                        //    constraintTriangleIndices.push_back(triangles[ti][1]);
+                        //    constraintTriangleIndices.push_back(triangles[ti][2]);
+                        //}
+                        //else {
+                            terrainTriangleIndices.push_back(triangles[ti][0]);
+                            terrainTriangleIndices.push_back(triangles[ti][1]);
+                            terrainTriangleIndices.push_back(triangles[ti][2]);
+                        //}
+                    }
+                }
+            }
+
+            // No reduced borders available, so the whole border has to stay put.
+            for (c = 0; c < numColumns; ++c) {
+                pointsToProtectDuringSimplification.push_back(c);
+                pointsToProtectDuringSimplification.push_back((numRows - 1) * numColumns + c);
+            }
+            for (r = 1; r < numRows - 1; ++r) {
+                pointsToProtectDuringSimplification.push_back(r * numColumns);
+                pointsToProtectDuringSimplification.push_back(r * numColumns + numColumns - 1);
+            }
+        }
+
+        geometry->setVertexArray(triangulatedVertices);
         std::vector<GLuint> gridIndices(terrainTriangleIndices);
         gridIndices.insert(gridIndices.end(), constraintTriangleIndices.begin(), constraintTriangleIndices.end());
         if (!gridIndices.empty())
@@ -3598,6 +3791,19 @@ osg::Node* DestinationTile::createPolygonal()
     // Kept so the mesh triangle set can be told apart from the curtain skirt set added below.
     osg::ref_ptr<osg::PrimitiveSet> meshPrimitiveSet =
         geometry->getNumPrimitiveSets() > 0 ? geometry->getPrimitiveSet(0) : NULL;
+
+    // Simplify if Delaunay failed and not deliberately regular
+    if (!delaunaySucceeded && !regular && _dataSet->getSimplifyTerrain() && maximumError > 0.0) {
+        log(osg::NOTICE, "Simplify fallback regular mesh to error level (will take time)...");
+
+        // Set low sample ratio to let maximum error rule (we have already adjusted mesh density)
+        osgUtil::Simplifier simplifier(0.000001, maximumError / 2.0);
+        simplifier.setDoTriStrip(false);
+        simplifier.setSmoothing(false);
+        simplifier.simplify(*geometry, pointsToProtectDuringSimplification);  // this will replace the normal vector with a new one
+
+        log(osg::NOTICE, "simplification done.");
+    }
 
     // Create curtains, skipping the triangles that belong to a constraint area
     CreateCurtainsVisitor createCurtainsVisitor(geometry->getBoundingBox(), skirtLength, constraintTriangleIndices);

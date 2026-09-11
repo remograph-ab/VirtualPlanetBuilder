@@ -127,13 +127,12 @@ namespace vpb
 		CDT::EdgeVec &edges,
 		std::vector<float> &heights);
 
-	/// Splits constraint edges that cross each other in their interiors (e.g. a road shape
-	/// crossing a model hull shape) by inserting a shared vertex at every proper intersection
-	/// and replacing each crossed edge with the chain of sub-edges through those points. This
-	/// is a general fix for the constrained Delaunay triangulation reporting intersecting
-	/// constraints between shapes of different types. Uses a uniform grid so it stays close to
-	/// O(n) for typical inputs. The vertices, edges and heights are all updated in place and
-	/// stay index-aligned.
+	/// Splits constraint edges at proper crossings and where an existing constraint endpoint
+	/// lies in another edge's interior. Proper crossings get a new shared vertex; T-junctions
+	/// reuse the touching endpoint. Each intersected edge is replaced with the chain of
+	/// sub-edges through those vertices. This produces valid shared topology for constrained
+	/// Delaunay triangulation. Uses a uniform grid so it stays close to O(n) for typical inputs.
+	/// The vertices, edges and heights are all updated in place and stay index-aligned.
 	VPB_EXPORT void splitIntersectingConstraintEdges(
 		std::vector<CDT::V2d<float> > &vertices,
 		CDT::EdgeVec &edges,
