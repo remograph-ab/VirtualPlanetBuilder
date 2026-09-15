@@ -2570,6 +2570,51 @@ namespace
         heights.swap(keptHeights);
     }
 
+    inline void insertConstraintBorderCrossings(
+        std::vector<CDT::V2d<float> > &vertices,
+        std::vector<float> &heights,
+        const std::vector<osg::Vec3> &crossings)
+    {
+        if (vertices.size() < 2) return;
+
+        for (size_t crossingIndex = 0; crossingIndex < crossings.size(); ++crossingIndex) {
+            const osg::Vec3 &crossing = crossings[crossingIndex];
+            bool foundExisting = false;
+            for (size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex) {
+                if (vertices[vertexIndex].x == crossing.x() && vertices[vertexIndex].y == crossing.y()) {
+                    heights[vertexIndex] = crossing.z();
+                    foundExisting = true;
+                    break;
+                }
+            }
+            if (foundExisting) continue;
+
+            size_t bestEdge = 0;
+            double bestDistanceSq = DBL_MAX;
+            for (size_t edgeIndex = 0; edgeIndex < vertices.size(); ++edgeIndex) {
+                size_t nextIndex = (edgeIndex + 1) % vertices.size();
+                double dx = (double)vertices[nextIndex].x - (double)vertices[edgeIndex].x;
+                double dy = (double)vertices[nextIndex].y - (double)vertices[edgeIndex].y;
+                double lengthSq = dx * dx + dy * dy;
+                double t = lengthSq > 0.0
+                    ? (((double)crossing.x() - vertices[edgeIndex].x) * dx +
+                       ((double)crossing.y() - vertices[edgeIndex].y) * dy) / lengthSq
+                    : 0.0;
+                t = std::max(0.0, std::min(1.0, t));
+                double offsetX = (double)crossing.x() - ((double)vertices[edgeIndex].x + t * dx);
+                double offsetY = (double)crossing.y() - ((double)vertices[edgeIndex].y + t * dy);
+                double distanceSq = offsetX * offsetX + offsetY * offsetY;
+                if (distanceSq < bestDistanceSq) {
+                    bestDistanceSq = distanceSq;
+                    bestEdge = edgeIndex;
+                }
+            }
+
+            vertices.insert(vertices.begin() + bestEdge + 1, CDT::V2d<float>(crossing.x(), crossing.y()));
+            heights.insert(heights.begin() + bestEdge + 1, crossing.z());
+        }
+    }
+
     // Position of a border vertex along the perimeter of the grid rectangle
     // [minC,maxC]x[minR,maxR], measured in grid units counter-clockwise from the lower left corner.
     inline float ringPerimeterPosition(
@@ -3146,6 +3191,7 @@ osg::Node* DestinationTile::createPolygonal()
         std::vector<CDT::V2d<float> > constraintVertices;
         CDT::EdgeVec constraintEdges;
         std::vector<float> constraintHeights;
+        std::vector<osg::Vec3> constraintBorderCrossings;
         ConstraintRings constraintRings;
         if (_models.valid()) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
@@ -3183,7 +3229,8 @@ osg::Node* DestinationTile::createPolygonal()
                     const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral, lineShapeFile);
                     buildTileConstraints(
                         rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
-                        constraintVertices, constraintEdges, constraintHeights, relativeHeight
+                        constraintVertices, constraintEdges, constraintHeights, relativeHeight,
+                        &constraintBorderCrossings
                     );
                     constraintRings.insert(constraintRings.end(), rings.begin(), rings.end());
 
@@ -3260,6 +3307,17 @@ osg::Node* DestinationTile::createPolygonal()
         borderVertices.insert(borderVertices.end(), rightBorderVertices.begin(), rightBorderVertices.end());
         borderVertices.insert(borderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
         borderVertices.insert(borderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
+        std::vector<float> borderHeights;
+        borderHeights.insert(borderHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
+        borderHeights.insert(borderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
+
+        // The clipping step knows the exact constraint segment and therefore owns the crossing
+        // height. Insert those points into the border loop directly instead of rediscovering
+        // them through local-space segment intersection.
+        insertConstraintBorderCrossings(borderVertices, borderHeights, constraintBorderCrossings);
+
         for (CDT::VertInd i = constraintVertices.size(); i < constraintVertices.size() + borderVertices.size() - 1; ++i) {
             constraintEdges.push_back(CDT::Edge(i, i + 1));
         }
@@ -3270,14 +3328,11 @@ osg::Node* DestinationTile::createPolygonal()
         //startTime = osg::Timer::instance()->tick();
 
         // Separate border heights, since CDT is 2D
-        constraintHeights.insert(constraintHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
-        constraintHeights.insert(constraintHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
-        constraintHeights.insert(constraintHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
-        constraintHeights.insert(constraintHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
+        constraintHeights.insert(constraintHeights.end(), borderHeights.begin(), borderHeights.end());
 
         // Sanitize the complete graph, including the tile border. Clipped shape constraints
-        // commonly end in the interior of a border edge and must split that edge at the shared
-        // endpoint before CDT receives it.
+        // commonly end in the interior of a border edge and must share that endpoint before
+        // CDT receives it.
         mergeDuplicateConstraintVertices(constraintVertices, constraintEdges, constraintHeights);
         removeCoveredConstraintEdges(constraintVertices, constraintEdges);
         splitIntersectingConstraintEdges(constraintVertices, constraintEdges, constraintHeights);

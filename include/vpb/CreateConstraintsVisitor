@@ -90,7 +90,8 @@ namespace vpb
 	/// world-space rings. Each ring segment is clipped to the tile extents, and the
 	/// surviving points are transformed into the tile-local coordinate system. The produced
 	/// vertices, edges and heights are appended to the supplied containers; edge indices are
-	/// offset by the current vertices size so several shape files can be combined.
+	/// offset by the current vertices size so several shape files can be combined. When supplied,
+	/// borderCrossings receives each tile-border endpoint with its constraint-interpolated height.
 	VPB_EXPORT void buildTileConstraints(
 		const ConstraintRings &rings,
 		const GeospatialExtents &tileExtents,

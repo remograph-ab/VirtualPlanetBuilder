@@ -1388,7 +1388,8 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
                 std::string allLevelsString;
                 std::string lineShapeFilename;
                 lineStream >> constraintsFilename >> relativeHeight >> allLevelsString >> lineShapeFilename;
-                if (constraintsFilename.empty()) continue;
+                if (constraintsFilename == "--" || constraintsFilename.empty())
+                    continue;
                 typeAttribute = "Constraint";
                 bool allLevels = (allLevelsString == "1");
                 // A trailing line shape file enables lateral (road) flattening; without it the
