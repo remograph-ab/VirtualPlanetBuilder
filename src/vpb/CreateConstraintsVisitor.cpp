@@ -472,6 +472,16 @@ namespace
         return p.x() >= e.xMin() && p.x() <= e.xMax() && p.y() >= e.yMin() && p.y() <= e.yMax();
     }
 
+    inline bool onTileBorderXY(const osg::Vec3d &p, const vpb::GeospatialExtents &e)
+    {
+        double span = std::max(e.xMax() - e.xMin(), e.yMax() - e.yMin());
+        double tolerance = std::max(1.0, span) * 1.0e-12;
+        return std::fabs(p.x() - e.xMin()) <= tolerance ||
+               std::fabs(p.x() - e.xMax()) <= tolerance ||
+               std::fabs(p.y() - e.yMin()) <= tolerance ||
+               std::fabs(p.y() - e.yMax()) <= tolerance;
+    }
+
     // Liang-Barsky clipping of the segment a->b against an axis aligned rectangle in XY.
     // Returns false if the segment lies completely outside, otherwise t0/t1 give the
     // parametric entry/exit positions along a->b within [0, 1].
@@ -533,6 +543,12 @@ namespace
 
 namespace
 {
+    struct ClippedConstraintPoint
+    {
+        osg::Vec3d world;
+        float localHeight;
+    };
+
     // True when the ring's bounding box misses the tile: such a ring can neither cross the tile
     // nor contain any of its points, so the whole ring can be skipped.
     bool ringOutsideExtents(const vpb::ConstraintRing &ring, const GeospatialExtents &tileExtents)
@@ -560,7 +576,8 @@ void vpb::buildTileConstraints(
     std::vector<CDT::V2d<float> > &vertices,
     CDT::EdgeVec &edges,
     std::vector<float> &heights,
-    const float& relativeHeight)
+    const float& relativeHeight,
+    std::vector<osg::Vec3> *borderCrossings)
 {
     for (size_t r = 0; r < rings.size(); ++r)
     {
@@ -595,8 +612,8 @@ void vpb::buildTileConstraints(
 
         // Clip every ring segment to the tile extents, assembling the surviving pieces into
         // continuous world-space polylines.
-        std::vector<std::vector<osg::Vec3d> > polylines;
-        std::vector<osg::Vec3d> current;
+        std::vector<std::vector<ClippedConstraintPoint> > polylines;
+        std::vector<ClippedConstraintPoint> current;
 
         for (size_t i = 0; i < n; ++i)
         {
@@ -617,21 +634,31 @@ void vpb::buildTileConstraints(
             // Use the exact endpoints when not clipped so continuity comparisons are exact.
             osg::Vec3d ca = (t0 > 0.0) ? (a + (b - a) * t0) : a;
             osg::Vec3d cb = (t1 < 1.0) ? (a + (b - a) * t1) : b;
+            osg::Vec3 localA = toLocal(a, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+            osg::Vec3 localB = toLocal(b, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+            ClippedConstraintPoint clippedA = {
+                ca,
+                (float)(localA.z() * (1.0 - t0) + localB.z() * t0)
+            };
+            ClippedConstraintPoint clippedB = {
+                cb,
+                (float)(localA.z() * (1.0 - t1) + localB.z() * t1)
+            };
             bool bClipped = (t1 < 1.0);
 
             if (current.empty())
             {
-                current.push_back(ca);
+                current.push_back(clippedA);
             }
-            else if (current.back() != ca)
+            else if (current.back().world != ca)
             {
                 // Discontinuity: the previous segment exited the tile before this one entered.
                 polylines.push_back(current);
                 current.clear();
-                current.push_back(ca);
+                current.push_back(clippedA);
             }
 
-            if (current.back() != cb) current.push_back(cb);
+            if (current.back().world != cb) current.push_back(clippedB);
 
             if (bClipped)
             {
@@ -643,10 +670,10 @@ void vpb::buildTileConstraints(
         if (!current.empty()) polylines.push_back(current);
 
         // Join the wrap-around if the first and last polylines meet at the same interior point.
-        if (polylines.size() >= 2 && polylines.front().front() == polylines.back().back())
+        if (polylines.size() >= 2 && polylines.front().front().world == polylines.back().back().world)
         {
-            std::vector<osg::Vec3d> &last = polylines.back();
-            std::vector<osg::Vec3d> &firstPolyline = polylines.front();
+            std::vector<ClippedConstraintPoint> &last = polylines.back();
+            std::vector<ClippedConstraintPoint> &firstPolyline = polylines.front();
             last.insert(last.end(), firstPolyline.begin() + 1, firstPolyline.end());
             polylines.erase(polylines.begin());
         }
@@ -654,18 +681,25 @@ void vpb::buildTileConstraints(
         // Emit each polyline as constraint vertices, heights and edges.
         for (size_t p = 0; p < polylines.size(); ++p)
         {
-            std::vector<osg::Vec3d> &polyline = polylines[p];
+            std::vector<ClippedConstraintPoint> &polyline = polylines[p];
 
-            bool closed = polyline.size() >= 2 && polyline.front() == polyline.back();
+            bool closed = polyline.size() >= 2 && polyline.front().world == polyline.back().world;
             if (closed) polyline.pop_back();
             if (polyline.size() < 2) continue;
 
             unsigned int base = (unsigned int)vertices.size();
             for (size_t k = 0; k < polyline.size(); ++k)
             {
-                osg::Vec3 local = toLocal(polyline[k], ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+                osg::Vec3 local = toLocal(polyline[k].world, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+                float height = polyline[k].localHeight + relativeHeight;
                 vertices.push_back(CDT::V2d<float>(local.x(), local.y()));
-                heights.push_back(local.z() + relativeHeight);
+                heights.push_back(height);
+                if (borderCrossings &&
+                    (k == 0 || k + 1 == polyline.size()) &&
+                    onTileBorderXY(polyline[k].world, tileExtents))
+                {
+                    borderCrossings->push_back(osg::Vec3(local.x(), local.y(), height));
+                }
             }
 
             unsigned int cnt = (unsigned int)polyline.size();

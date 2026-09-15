@@ -139,31 +139,61 @@ float SourceData::getInterpolatedValue(GDALRasterBand *band, double x, double y,
     if (rowMin > rowMax) rowMin = rowMax;
     if (colMin > colMax) colMin = colMax;
 
-    float urHeight, llHeight, ulHeight, lrHeight;
-
-    band->RasterIO(GF_Read, colMin, rowMin, 1, 1, &llHeight, 1, 1, GDT_Float32, 0, 0);
-    band->RasterIO(GF_Read, colMin, rowMax, 1, 1, &ulHeight, 1, 1, GDT_Float32, 0, 0);
-    band->RasterIO(GF_Read, colMax, rowMin, 1, 1, &lrHeight, 1, 1, GDT_Float32, 0, 0);
-    band->RasterIO(GF_Read, colMax, rowMax, 1, 1, &urHeight, 1, 1, GDT_Float32, 0, 0);
-
     ValidValueOperator validValueOperator(band);
 
-    if (validValueOperator.isNoDataValue(llHeight)) llHeight = originalHeight;
-    if (validValueOperator.isNoDataValue(ulHeight)) ulHeight = originalHeight;
-    if (validValueOperator.isNoDataValue(lrHeight)) lrHeight = originalHeight;
-    if (validValueOperator.isNoDataValue(urHeight)) urHeight = originalHeight;
+    float urHeight = validValueOperator.noDataValue;
+    float llHeight = validValueOperator.noDataValue;
+    float ulHeight = validValueOperator.noDataValue;
+    float lrHeight = validValueOperator.noDataValue;
+
+    CPLErr llResult = band->RasterIO(GF_Read, colMin, rowMin, 1, 1, &llHeight, 1, 1, GDT_Float32, 0, 0);
+    CPLErr ulResult = band->RasterIO(GF_Read, colMin, rowMax, 1, 1, &ulHeight, 1, 1, GDT_Float32, 0, 0);
+    CPLErr lrResult = band->RasterIO(GF_Read, colMax, rowMin, 1, 1, &lrHeight, 1, 1, GDT_Float32, 0, 0);
+    CPLErr urResult = band->RasterIO(GF_Read, colMax, rowMax, 1, 1, &urHeight, 1, 1, GDT_Float32, 0, 0);
+
+    bool llValid = (llResult == CE_None && !validValueOperator.isNoDataValue(llHeight));
+    bool ulValid = (ulResult == CE_None && !validValueOperator.isNoDataValue(ulHeight));
+    bool lrValid = (lrResult == CE_None && !validValueOperator.isNoDataValue(lrHeight));
+    bool urValid = (urResult == CE_None && !validValueOperator.isNoDataValue(urHeight));
 
     double x_rem = c - (int)c;
     double y_rem = r - (int)r;
 
-    double w00 = (1.0 - y_rem) * (1.0 - x_rem) * (double)llHeight;
-    double w01 = (1.0 - y_rem) * x_rem * (double)lrHeight;
-    double w10 = y_rem * (1.0 - x_rem) * (double)ulHeight;
-    double w11 = y_rem * x_rem * (double)urHeight;
+    double w00 = (1.0 - y_rem) * (1.0 - x_rem);
+    double w01 = (1.0 - y_rem) * x_rem;
+    double w10 = y_rem * (1.0 - x_rem);
+    double w11 = y_rem * x_rem;
 
-    float result = (float)(w00 + w01 + w10 + w11);
+    double weightedHeight = 0.0;
+    double totalWeight = 0.0;
 
-    return result;
+    if (llValid)
+    {
+        weightedHeight += w00 * (double)llHeight;
+        totalWeight += w00;
+    }
+    if (lrValid)
+    {
+        weightedHeight += w01 * (double)lrHeight;
+        totalWeight += w01;
+    }
+    if (ulValid)
+    {
+        weightedHeight += w10 * (double)ulHeight;
+        totalWeight += w10;
+    }
+    if (urValid)
+    {
+        weightedHeight += w11 * (double)urHeight;
+        totalWeight += w11;
+    }
+
+    if (totalWeight == 0.0)
+    {
+        return validValueOperator.noDataValue;
+    }
+
+    return (float)(weightedHeight / totalWeight);
 }
 
 bool SourceData::sampleElevation(const osg::CoordinateSystemNode* cs, double verticalScale, double x, double y, float& height)

@@ -101,7 +101,8 @@ namespace vpb
 		std::vector<CDT::V2d<float> > &vertices,
 		CDT::EdgeVec &edges,
 		std::vector<float> &heights,
-		const float &relativeHeight = 0.0f);
+		const float &relativeHeight = 0.0f,
+		std::vector<osg::Vec3> *borderCrossings = 0);
 
 	/// Transforms whole world-space constraint rings into the tile-local coordinate system
 	/// (matching the transform buildTileConstraints applies), keeping only the 2D x/y of each
