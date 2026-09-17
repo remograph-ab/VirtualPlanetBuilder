@@ -997,7 +997,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
     while (arguments.read("--geocentric"))
     {
         buildOptions->setConvertFromGeographicToGeocentric(true);
-        fout<<"--geocentric "<<std::endl;
+        //fout<<"--geocentric "<<std::endl;
     }
 
     double radius;
@@ -1019,7 +1019,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         double radius = (ellipsoid->getRadiusPolar() + ellipsoid->getRadiusEquator())*0.5;
         ellipsoid->setRadiusPolar(radius);
         ellipsoid->setRadiusEquator(radius);
-        fout<<"--spherical, new radius set to "<<radius<<std::endl;
+        //fout<<"--spherical, new radius set to "<<radius<<std::endl;
     }
 
     std::string defaultImagePath;
@@ -1166,12 +1166,12 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         else if (arguments.read(pos, "--cs",def))
         {
             currentCS = !def.empty() ? vpb::coordinateSystemStringToWTK(def) : "";
-            fout<<"--cs \""<<def<<"\" converted to "<<currentCS<<std::endl;
+            //fout<<"--cs \""<<def<<"\" converted to "<<currentCS<<std::endl;
         }
         else if (arguments.read(pos, "--wkt",def))
         {
             currentCS = def;
-            fout<<"--wkt "<<currentCS<<std::endl;
+            //fout<<"--wkt "<<currentCS<<std::endl;
         }
         else if (arguments.read(pos, "--wkt-file",def))
         {
@@ -1185,7 +1185,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
                     in >> line;
                     currentCS += line;
                 }
-                fout<<"--wkt-file "<<currentCS<<std::endl;
+                //fout<<"--wkt-file "<<currentCS<<std::endl;
             }
         }
         else if (arguments.read(pos, "--bluemarble-east"))
@@ -1193,7 +1193,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             currentCS = vpb::coordinateSystemStringToWTK("WGS84");
             computeGeoTransForRange(0.0, 180.0, -90.0, 90.0);
             
-            fout<<"--bluemarble-east "<<currentCS<<" matrix="<<geoTransform<<std::endl;
+            //fout<<"--bluemarble-east "<<currentCS<<" matrix="<<geoTransform<<std::endl;
         }
 
         else if (arguments.read(pos, "--bluemarble-west"))
@@ -1201,7 +1201,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             currentCS = vpb::coordinateSystemStringToWTK("WGS84");
             computeGeoTransForRange(-180.0, 0.0, -90.0, 90.0);
             
-            fout<<"--bluemarble-west "<<currentCS<<" matrix="<<geoTransform<<std::endl;
+            //fout<<"--bluemarble-west "<<currentCS<<" matrix="<<geoTransform<<std::endl;
         }
 
         else if (arguments.read(pos, "--whole-globe"))
@@ -1209,14 +1209,14 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             currentCS = vpb::coordinateSystemStringToWTK("WGS84");
             computeGeoTransForRange(-180.0, 180.0, -90.0, 90.0);
             
-            fout<<"--whole-globe "<<currentCS<<" matrix="<<geoTransform<<std::endl;
+            //fout<<"--whole-globe "<<currentCS<<" matrix="<<geoTransform<<std::endl;
         }
 
         else if (arguments.read(pos, "--range", xMin, xMax, yMin, yMax))
         {
             computeGeoTransForRange( xMin, xMax, yMin, yMax);
             
-            fout<<"--range, matrix="<<geoTransform<<std::endl;
+            //fout<<"--range, matrix="<<geoTransform<<std::endl;
         }
 
         else if (arguments.read(pos, "--identity"))
@@ -1230,25 +1230,25 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         {
            geoTransformSet = true;
            geoTransformScale = false;
-           fout<<"--xx "<<geoTransform(0,0)<<std::endl;
+           //fout<<"--xx "<<geoTransform(0,0)<<std::endl;
         }
         else if (arguments.read(pos, "--xy",geoTransform(1,0)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--xy "<<geoTransform(1,0)<<std::endl;
+            //fout<<"--xy "<<geoTransform(1,0)<<std::endl;
         }
         else if (arguments.read(pos, "--xz",geoTransform(2,0)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--xz "<<geoTransform(2,0)<<std::endl;
+            //fout<<"--xz "<<geoTransform(2,0)<<std::endl;
         }
         else if (arguments.read(pos, "--xt",geoTransform(3,0)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--xo "<<geoTransform(3,0)<<std::endl;
+            //fout<<"--xo "<<geoTransform(3,0)<<std::endl;
         }
 
         // y vector
@@ -1256,25 +1256,25 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--yx "<<geoTransform(0,1)<<std::endl;
+            //fout<<"--yx "<<geoTransform(0,1)<<std::endl;
         }
         else if (arguments.read(pos, "--yy",geoTransform(1,1)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--yy "<<geoTransform(1,1)<<std::endl;
+            //fout<<"--yy "<<geoTransform(1,1)<<std::endl;
         }
         else if (arguments.read(pos, "--yz",geoTransform(2,1)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--yz "<<geoTransform(2,1)<<std::endl;
+            //fout<<"--yz "<<geoTransform(2,1)<<std::endl;
         }
         else if (arguments.read(pos, "--yt",geoTransform(3,1)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--yt "<<geoTransform(3,1)<<std::endl;
+            //fout<<"--yt "<<geoTransform(3,1)<<std::endl;
         }
 
         // z vector
@@ -1282,36 +1282,36 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--zx "<<geoTransform(0,2)<<std::endl;
+            //fout<<"--zx "<<geoTransform(0,2)<<std::endl;
         }
         else if (arguments.read(pos, "--zy",geoTransform(1,2)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--zy "<<geoTransform(1,2)<<std::endl;
+            //fout<<"--zy "<<geoTransform(1,2)<<std::endl;
         }
         else if (arguments.read(pos, "--zz",geoTransform(2,2)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--zz "<<geoTransform(2,2)<<std::endl;
+            //fout<<"--zz "<<geoTransform(2,2)<<std::endl;
         }
         else if (arguments.read(pos, "--zt",geoTransform(3,2)))
         {
             geoTransformSet = true;
             geoTransformScale = false;
-            fout<<"--zt "<<geoTransform(3,2)<<std::endl;
+            //fout<<"--zt "<<geoTransform(3,2)<<std::endl;
         }
 
         else if (arguments.read(pos, "--levels", min_level, max_level))
         {
             minmaxLevelSet = true;
-            fout<<"--levels, min_level="<<min_level<<"  max_level="<<max_level<<std::endl;
+            //fout<<"--levels, min_level="<<min_level<<"  max_level="<<max_level<<std::endl;
         }
         
         else if (arguments.read(pos, "--layer", layerNum))
         {
-            fout<<"--layer layeNumber="<<layerNum<<std::endl;
+            //fout<<"--layer layeNumber="<<layerNum<<std::endl;
 
             // create a new ImageOptions object for the new layer.
             imageOptions = new vpb::ImageOptions(*buildOptions);
@@ -1321,44 +1321,44 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         else if (arguments.read(pos, "--vector"))
         {
             dataType = vpb::SpatialProperties::VECTOR;
-            fout<<"--vector input data"<<std::endl;
+            //fout<<"--vector input data"<<std::endl;
         }
 
         else if (arguments.read(pos, "--raster"))
         {
             dataType = vpb::SpatialProperties::RASTER;
-            fout<<"--raster input data"<<std::endl;
+            //fout<<"--raster input data"<<std::endl;
         }
 
         else if (arguments.read(pos, "--set",setname))
         {
-            fout<<"--set "<<setname<<std::endl;
+            //fout<<"--set "<<setname<<std::endl;
         }
 
         else if (arguments.read(pos, "-d",filename))
         {
-            fout<<"-d "<<filename<<std::endl;
+            //fout<<"-d "<<filename<<std::endl;
 
             processFile(vpb::Source::HEIGHT_FIELD, filename, currentLayerOperation);
             reset();
         }
         else if (arguments.read(pos, "-t",filename))
         {
-            fout<<"-t "<<filename<<std::endl;
+            //fout<<"-t "<<filename<<std::endl;
 
             processFile(vpb::Source::IMAGE, filename, currentLayerOperation);
             reset();
         }
         else if (arguments.read(pos, "-m",filename))
         {
-            fout<<"-m "<<filename<<std::endl;
+            //fout<<"-m "<<filename<<std::endl;
 
             processFile(vpb::Source::MODEL, filename, currentLayerOperation);
             reset();
         }
         else if (arguments.read(pos, "--buildings",filename) || arguments.read(pos, "--building",filename) || arguments.read(pos, "-b",filename))
         {
-            fout<<"--buildings "<<filename<<std::endl;
+            //fout<<"--buildings "<<filename<<std::endl;
 
             typeAttribute = "Building";
             processFile(vpb::Source::SHAPEFILE, filename, currentLayerOperation);
@@ -1366,17 +1366,17 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         }
         else if (arguments.read(pos, "--forest",filename) || arguments.read(pos, "-f",filename))
         {
-            fout<<"--forest "<<filename<<std::endl;
+            //fout<<"--forest "<<filename<<std::endl;
             typeAttribute = "Forest";
             processFile(vpb::Source::SHAPEFILE, filename, currentLayerOperation);
             reset();
         }
         else if (arguments.read(pos, "--constraints", filename))
         {
-            fout<<"--constraints "<<filename<<std::endl;
+            //fout<<"--constraints "<<filename<<std::endl;
             osgDB::ifstream in(filename.c_str());
             if (!in.good()) {
-                fout << "Failed reading constraints file " << filename << std::endl;
+                //fout << "Failed reading constraints file " << filename << std::endl;
                 return 1;
             }
 
@@ -1401,13 +1401,13 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
         }
         else if (arguments.read(pos, "--sf",filename))
         {
-            fout<<"--sf "<<filename<<std::endl;
+            //fout<<"--sf "<<filename<<std::endl;
             processFile(vpb::Source::SHAPEFILE, filename, currentLayerOperation);
             reset();
         }
         else if (arguments.read(pos, "-o",filename)) 
         {
-            fout<<"-o "<<filename<<std::endl;
+            //fout<<"-o "<<filename<<std::endl;
             buildOptions->setDestinationName(filename);
             
             if (!currentCS.empty()) buildOptions->setDestinationCoordinateSystem(currentCS);

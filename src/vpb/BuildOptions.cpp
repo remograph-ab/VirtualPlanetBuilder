@@ -324,16 +324,34 @@ void BuildOptions::setNotifyLevel(NotifyLevel level)
 
 void BuildOptions::setNotifyLevel(const std::string& notifyLevel)
 {
-    if      (notifyLevel=="ALWAYS") setNotifyLevel(ALWAYS);
-    else if (notifyLevel=="DISABLE") setNotifyLevel(ALWAYS);
-    else if (notifyLevel=="OFF") setNotifyLevel(ALWAYS);
-    else if (notifyLevel=="FATAL") setNotifyLevel(FATAL);
-    else if (notifyLevel=="WARN") setNotifyLevel(WARN);
-    else if (notifyLevel=="NOTICE") setNotifyLevel(NOTICE);
-    else if (notifyLevel=="INFO") setNotifyLevel(INFO);
-    else if (notifyLevel=="DEBUG") setNotifyLevel(DEBUG_INFO);
-    else if (notifyLevel=="DEBUG_INFO") setNotifyLevel(DEBUG_INFO);
-    else if (notifyLevel=="DEBUG_FP") setNotifyLevel(DEBUG_FP);
+    if (notifyLevel == "ALWAYS" || notifyLevel == "DISABLE" || notifyLevel == "OFF") {
+        setNotifyLevel(ALWAYS);
+        osg::setNotifyLevel(osg::ALWAYS);
+    }
+    else if (notifyLevel == "FATAL") {
+        setNotifyLevel(FATAL);
+        osg::setNotifyLevel(osg::FATAL);
+    }
+    else if (notifyLevel == "WARN") {
+        setNotifyLevel(WARN);
+        osg::setNotifyLevel(osg::WARN);
+    }
+    else if (notifyLevel == "NOTICE") {
+        setNotifyLevel(NOTICE);
+        osg::setNotifyLevel(osg::NOTICE);
+    }
+    else if (notifyLevel == "INFO") {
+        setNotifyLevel(INFO);
+        osg::setNotifyLevel(osg::INFO);
+    }
+    else if (notifyLevel == "DEBUG" || notifyLevel == "DEBUG_INFO") {
+        setNotifyLevel(DEBUG_INFO);
+        osg::setNotifyLevel(osg::DEBUG_INFO);
+    }
+    else if (notifyLevel == "DEBUG_FP") {
+        setNotifyLevel(DEBUG_FP);
+        osg::setNotifyLevel(osg::DEBUG_FP);
+    }
 }
 
 bool BuildOptions::compatible(BuildOptions& rhs) const
