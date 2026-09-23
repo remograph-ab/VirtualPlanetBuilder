@@ -17,6 +17,8 @@
 
 using namespace vpb;
 
+std::atomic<unsigned long long> GeospatialDataset::s_accessCounter(0);
+
 GeospatialDataset::GeospatialDataset(const std::string& filename, AccessMode accessMode)
 {
     updateTimeStamp();

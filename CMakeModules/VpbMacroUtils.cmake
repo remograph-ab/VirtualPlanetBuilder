@@ -12,11 +12,21 @@
 
 MACRO(LINK_WITH_VARIABLES TRGTNAME)
     FOREACH(varname ${ARGN})
-        IF(${varname}_DEBUG)
+        IF(${varname}_RELEASE)
+            # Find-modules that use select_library_configurations() set ${varname} to
+            # "optimized;<release>;debug;<debug>". Wrapping that in another optimized/debug
+            # keyword demotes the inner keywords to literal optimized.lib/debug.lib inputs.
+            TARGET_LINK_LIBRARIES(${TRGTNAME} optimized "${${varname}_RELEASE}")
+            IF(${varname}_DEBUG)
+                TARGET_LINK_LIBRARIES(${TRGTNAME} debug "${${varname}_DEBUG}")
+            ELSE(${varname}_DEBUG)
+                TARGET_LINK_LIBRARIES(${TRGTNAME} debug "${${varname}_RELEASE}")
+            ENDIF(${varname}_DEBUG)
+        ELSEIF(${varname}_DEBUG)
             TARGET_LINK_LIBRARIES(${TRGTNAME} optimized "${${varname}}" debug "${${varname}_DEBUG}")
-        ELSE(${varname}_DEBUG)
+        ELSE(${varname}_RELEASE)
             TARGET_LINK_LIBRARIES(${TRGTNAME} "${${varname}}" )
-        ENDIF(${varname}_DEBUG)
+        ENDIF(${varname}_RELEASE)
     ENDFOREACH(varname)
 ENDMACRO(LINK_WITH_VARIABLES TRGTNAME)
 

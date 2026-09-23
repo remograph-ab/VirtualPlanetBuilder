@@ -271,6 +271,15 @@ ELSE()
         SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /FORCE:MULTIPLE")
         endif()
 
+        # Identical COMDAT folding makes profilers report one arbitrary name for every function
+        # that shares its machine code, which mis-attributes samples and call stacks.
+        OPTION(VPB_PROFILING_FRIENDLY_BUILD "Disable COMDAT folding and emit full PDBs so profilers resolve symbols correctly" OFF)
+        MARK_AS_ADVANCED(VPB_PROFILING_FRIENDLY_BUILD)
+        IF(VPB_PROFILING_FRIENDLY_BUILD)
+            SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /OPT:NOICF /DEBUG:FULL")
+            SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /OPT:NOICF /DEBUG:FULL")
+        ENDIF()
+
 
     ELSE()
         # CMake lacks an elseif, so other non-gcc, non-VS compilers need

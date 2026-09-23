@@ -14,7 +14,6 @@
 #ifndef GEOSPATIALDATASET_H
 #define GEOSPATIALDATASET_H 1
 
-#include <osg/Timer>
 #include <osgDB/FileUtils>
 
 #include <OpenThreads/Mutex>
@@ -22,6 +21,8 @@
 #include <vpb/Export>
 
 #include <gdal_priv.h>
+
+#include <atomic>
 
 namespace vpb
 {
@@ -65,9 +66,11 @@ class VPB_EXPORT GeospatialDataset : public osg::Referenced
 
         GDALDataset* getGDALDataset() { updateTimeStamp(); return _dataset; }
         
-        void updateTimeStamp() { _timeStamp = osg::Timer::instance()->time_s(); }
+        // Only the relative order matters (LRU trimming in System::clearUnusedDatasets), and this
+        // runs on every accessor call, so a counter is used instead of reading the system clock.
+        void updateTimeStamp() { _timeStamp = s_accessCounter.fetch_add(1, std::memory_order_relaxed); }
         
-        double getTimeStamp() const { return _timeStamp; }
+        double getTimeStamp() const { return (double)_timeStamp; }
         
         OpenThreads::Mutex& getMutex() const { return _mutex; }
         
@@ -75,9 +78,11 @@ class VPB_EXPORT GeospatialDataset : public osg::Referenced
 
         virtual ~GeospatialDataset();
         
+        static std::atomic<unsigned long long> s_accessCounter;
+
         mutable OpenThreads::Mutex  _mutex;
         GDALDataset*                _dataset;
-        double                      _timeStamp;
+        unsigned long long          _timeStamp;
 };
 
 }

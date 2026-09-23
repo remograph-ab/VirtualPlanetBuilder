@@ -2,6 +2,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -340,6 +341,17 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
             std::vector<osg::Vec3d> verts;
             std::vector<float> zraw;
             std::vector<bool> zvalid;
+
+            // A shape file that carries its own elevations owns them; only flat rings fall
+            // back to sampling the height field.
+            bool ringHasOwnZ = false;
+            for (unsigned int i = 0; i < count; ++i)
+            {
+                unsigned int index = i + first;
+                if (index >= vertices->size()) break;
+                if ((*vertices)[index].z() != 0.0) { ringHasOwnZ = true; break; }
+            }
+
             for (unsigned int i = 0; i < count; ++i)
             {
                 unsigned int index = i + first;
@@ -349,7 +361,9 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
 
                 // Sample the elevation from all available sources at the highest resolution.
                 float z = 0.0f;
-                bool valid = _sampler && _sampler->sample(vertex.x(), vertex.y(), z);
+                bool valid = true;
+                if (ringHasOwnZ) z = (float)vertex.z();
+                else valid = _sampler && _sampler->sample(vertex.x(), vertex.y(), z);
 
                 verts.push_back(vertex);
                 zraw.push_back(z);
@@ -472,16 +486,6 @@ namespace
         return p.x() >= e.xMin() && p.x() <= e.xMax() && p.y() >= e.yMin() && p.y() <= e.yMax();
     }
 
-    inline bool onTileBorderXY(const osg::Vec3d &p, const vpb::GeospatialExtents &e)
-    {
-        double span = std::max(e.xMax() - e.xMin(), e.yMax() - e.yMin());
-        double tolerance = std::max(1.0, span) * 1.0e-12;
-        return std::fabs(p.x() - e.xMin()) <= tolerance ||
-               std::fabs(p.x() - e.xMax()) <= tolerance ||
-               std::fabs(p.y() - e.yMin()) <= tolerance ||
-               std::fabs(p.y() - e.yMax()) <= tolerance;
-    }
-
     // Liang-Barsky clipping of the segment a->b against an axis aligned rectangle in XY.
     // Returns false if the segment lies completely outside, otherwise t0/t1 give the
     // parametric entry/exit positions along a->b within [0, 1].
@@ -547,6 +551,8 @@ namespace
     {
         osg::Vec3d world;
         float localHeight;
+        // Produced by clipping rather than taken from the ring, so it sits on the tile border.
+        bool border;
     };
 
     // True when the ring's bounding box misses the tile: such a ring can neither cross the tile
@@ -600,9 +606,11 @@ void vpb::buildTileConstraints(
             unsigned int base = (unsigned int)vertices.size();
             for (size_t i = 0; i < n; ++i)
             {
-                osg::Vec3 local = toLocal(ring[i], ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+                osg::Vec3d world = ring[i];
+                world.z() += relativeHeight;
+                osg::Vec3 local = toLocal(world, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
                 vertices.push_back(CDT::V2d<float>(local.x(), local.y()));
-                heights.push_back(local.z() + relativeHeight);
+                heights.push_back(local.z());
             }
             for (unsigned int k = 0; k + 1 < (unsigned int)n; ++k)
                 edges.push_back(CDT::Edge(base + k, base + k + 1));
@@ -634,15 +642,19 @@ void vpb::buildTileConstraints(
             // Use the exact endpoints when not clipped so continuity comparisons are exact.
             osg::Vec3d ca = (t0 > 0.0) ? (a + (b - a) * t0) : a;
             osg::Vec3d cb = (t1 < 1.0) ? (a + (b - a) * t1) : b;
-            osg::Vec3 localA = toLocal(a, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
-            osg::Vec3 localB = toLocal(b, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+            ca.z() += relativeHeight;
+            cb.z() += relativeHeight;
+            osg::Vec3 localCA = toLocal(ca, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
+            osg::Vec3 localCB = toLocal(cb, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
             ClippedConstraintPoint clippedA = {
                 ca,
-                (float)(localA.z() * (1.0 - t0) + localB.z() * t0)
+                localCA.z(),
+                t0 > 0.0
             };
             ClippedConstraintPoint clippedB = {
                 cb,
-                (float)(localA.z() * (1.0 - t1) + localB.z() * t1)
+                localCB.z(),
+                t1 < 1.0
             };
             bool bClipped = (t1 < 1.0);
 
@@ -691,14 +703,17 @@ void vpb::buildTileConstraints(
             for (size_t k = 0; k < polyline.size(); ++k)
             {
                 osg::Vec3 local = toLocal(polyline[k].world, ellipsoid, mapLatLongsToXYZ, useLocalToTileTransform, worldToLocal);
-                float height = polyline[k].localHeight + relativeHeight;
+                float height = polyline[k].localHeight;
                 vertices.push_back(CDT::V2d<float>(local.x(), local.y()));
                 heights.push_back(height);
-                if (borderCrossings &&
-                    (k == 0 || k + 1 == polyline.size()) &&
-                    onTileBorderXY(polyline[k].world, tileExtents))
+                if (borderCrossings && polyline[k].border)
                 {
                     borderCrossings->push_back(osg::Vec3(local.x(), local.y(), height));
+                    //std::cout << std::fixed << std::setprecision(15);
+                    //std::cout << "remo.createLightPoint(false, "
+                    //          << polyline[k].world.x() << ", "
+                    //          << polyline[k].world.y() << ", "
+                    //          << polyline[k].world.z() << ")" << std::endl;
                 }
             }
 

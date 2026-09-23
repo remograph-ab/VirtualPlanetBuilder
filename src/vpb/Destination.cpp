@@ -102,14 +102,126 @@ void DestinationTile::reportTimes()
 }
 
 
-class WorstPointsFinder
+// Nonzero-winding classification of every height-field sample against the tile's constraint
+// rings. Neither the rings nor the grid change while the incremental Delaunay loop runs, so
+// this is evaluated once per tile and shared by every worst-point pass.
+class ConstraintSampleMask
 {
 public:
-    struct ConstraintEdge
+    ConstraintSampleMask(
+        const osg::HeightField *heightField,
+        const osg::BoundingBox &heightFieldBbox,
+        const std::vector<std::vector<osg::Vec2> > &constraintRings
+    )
+        : _numCols(heightField->getNumColumns())
+    {
+        unsigned int numRows = heightField->getNumRows();
+        _mask.assign(static_cast<size_t>(_numCols) * numRows, 0);
+        if (constraintRings.empty())
+            return;
+
+        const float west = heightFieldBbox.xMin();
+        const float south = heightFieldBbox.yMin();
+        const float intervalX = heightField->getXInterval();
+        const float intervalY = heightField->getYInterval();
+        const float tolerance = (intervalX + intervalY) / 20.0f;
+        const float toleranceSquared = tolerance * tolerance;
+
+        std::vector<osg::Vec4> ringBounds;
+        std::vector<std::vector<Edge> > ringEdges;
+        ringBounds.reserve(constraintRings.size());
+        ringEdges.reserve(constraintRings.size());
+        for (size_t ri = 0; ri < constraintRings.size(); ++ri) {
+            const std::vector<osg::Vec2> &ring = constraintRings[ri];
+            float minX = FLT_MAX, minY = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
+            std::vector<Edge> edges;
+            edges.reserve(ring.size());
+            if (!ring.empty()) {
+                for (size_t i = 0; i < ring.size(); ++i) {
+                    const osg::Vec2 &vtx = ring[i];
+                    if (vtx.x() < minX) minX = vtx.x();
+                    if (vtx.x() > maxX) maxX = vtx.x();
+                    if (vtx.y() < minY) minY = vtx.y();
+                    if (vtx.y() > maxY) maxY = vtx.y();
+                }
+                for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+                    const osg::Vec2 &vi = ring[i];
+                    const osg::Vec2 &vj = ring[j];
+                    Edge edge;
+                    edge.viX = vi.x();
+                    edge.viY = vi.y();
+                    edge.vjY = vj.y();
+                    edge.ex = vj.x() - vi.x();
+                    edge.ey = vj.y() - vi.y();
+                    edge.minX = std::min(vi.x(), vj.x());
+                    edge.maxX = std::max(vi.x(), vj.x());
+                    edge.minY = std::min(vi.y(), vj.y());
+                    edge.maxY = std::max(vi.y(), vj.y());
+                    edge.edgeLength2 = edge.ex * edge.ex + edge.ey * edge.ey;
+                    edges.push_back(edge);
+                }
+            }
+            ringBounds.push_back(osg::Vec4(minX, minY, maxX, maxY));
+            ringEdges.push_back(edges);
+        }
+
+        std::vector<size_t> rowRingIndices;
+        rowRingIndices.reserve(constraintRings.size());
+        for (unsigned int r = 0; r < numRows; ++r) {
+            float y = south + intervalY * r;
+
+            // Only rings whose bbox spans this scanline can contribute, and only the columns
+            // they cover need evaluating - everything else has winding zero by construction.
+            rowRingIndices.clear();
+            float rowMinX = FLT_MAX, rowMaxX = -FLT_MAX;
+            for (size_t ri = 0; ri < ringBounds.size(); ++ri) {
+                const osg::Vec4 &bounds = ringBounds[ri];
+                if (y < bounds[1] || y > bounds[3])
+                    continue;
+                rowRingIndices.push_back(ri);
+                if (bounds[0] < rowMinX) rowMinX = bounds[0];
+                if (bounds[2] > rowMaxX) rowMaxX = bounds[2];
+            }
+            if (rowRingIndices.empty())
+                continue;
+
+            int firstCol = static_cast<int>(std::max<float>(floorf((rowMinX - west) / intervalX), 0.0f));
+            int lastCol = static_cast<int>(std::min<float>(ceilf((rowMaxX - west) / intervalX), _numCols - 1.0f));
+
+            for (int c = firstCol; c <= lastCol; ++c) {
+                float x = west + intervalX * c;
+
+                int winding = 0;
+                for (size_t rii = 0; rii < rowRingIndices.size(); ++rii) {
+                    size_t ri = rowRingIndices[rii];
+                    const osg::Vec4 &bounds = ringBounds[ri];
+                    if (x < bounds[0] || x > bounds[2])
+                        continue;
+
+                    bool onEdge = false;
+                    winding += ringWindingNumber(x, y, ringEdges[ri], tolerance, toleranceSquared, onEdge);
+                    if (onEdge) {
+                        winding = 1;
+                        break;
+                    }
+                }
+
+                if (winding != 0)
+                    _mask[static_cast<size_t>(r) * _numCols + c] = 1;
+            }
+        }
+    }
+
+    inline bool inside(unsigned int col, unsigned int row) const
+    {
+        return _mask[static_cast<size_t>(row) * _numCols + col] != 0;
+    }
+
+private:
+    struct Edge
     {
         float viX;
         float viY;
-        float vjX;
         float vjY;
         float ex;
         float ey;
@@ -120,6 +232,49 @@ public:
         float edgeLength2;
     };
 
+    static int ringWindingNumber(
+        float px, float py, const std::vector<Edge> &edges, float tolerance, float toleranceSquared, bool &onEdge
+    )
+    {
+        onEdge = false;
+        int wn = 0;
+        for (size_t i = 0; i < edges.size(); ++i) {
+            const Edge &edge = edges[i];
+            bool straddles = (edge.viY <= py) ? (edge.vjY > py) : (edge.vjY <= py);
+            bool nearEdgeBox = px >= edge.minX - tolerance && px <= edge.maxX + tolerance &&
+                               py >= edge.minY - tolerance && py <= edge.maxY + tolerance;
+            if (!straddles && !nearEdgeBox)
+                continue;
+
+            float cross = edge.ex * (py - edge.viY) - edge.ey * (px - edge.viX);
+
+            // A point lying on an edge (within a small tolerance) is considered inside the ring.
+            if (nearEdgeBox && cross * cross <= toleranceSquared * edge.edgeLength2) {
+                onEdge = true;
+                return 0;
+            }
+
+            if (straddles) {
+                if (edge.viY <= py) {
+                    if (cross > 0.0f) ++wn;
+                }
+                else {
+                    if (cross < 0.0f) --wn;
+                }
+            }
+        }
+
+        return wn;
+    }
+
+    std::vector<unsigned char> _mask;
+    unsigned int _numCols;
+};
+
+
+class WorstPointsFinder
+{
+public:
     WorstPointsFinder(
         const CDT::Triangulation<float> &triangulation,
         const std::vector<float> &constraintHeights,
@@ -129,7 +284,7 @@ public:
         const float &maxError,
         const float &batchSize,
         const float &batchMaxDist2,
-        const std::vector<std::vector<osg::Vec2> > &constraintRings
+        const ConstraintSampleMask &constraintMask
     )
         : _triangulation(triangulation)
         , _constraintHeights(constraintHeights)
@@ -139,7 +294,7 @@ public:
         , _maxError(maxError)
         , _batchSize(batchSize)
         , _batchMaxDist2(batchMaxDist2)
-        , _constraintRings(constraintRings)
+        , _constraintMask(constraintMask)
     {
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
@@ -150,47 +305,6 @@ public:
         _heightFieldNumCols = _heightField->getNumColumns();
         _heightFieldNumRows = _heightField->getNumRows();
         _tolerance = (_heightField->getXInterval() + _heightField->getYInterval()) / 20.0f;
-        _toleranceSquared = _tolerance * _tolerance;
-
-        // Precompute a bounding box per ring so the per-point test can cheaply reject
-        // points that fall outside a ring before scanning all of its edges.
-        _constraintRingBounds.reserve(_constraintRings.size());
-        _constraintRingEdges.reserve(_constraintRings.size());
-        for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
-            const std::vector<osg::Vec2> &ring = _constraintRings[ri];
-            float minX = FLT_MAX, minY = FLT_MAX, maxX = -FLT_MAX, maxY = -FLT_MAX;
-            for (size_t i = 0; i < ring.size(); ++i) {
-                const osg::Vec2 &vtx = ring[i];
-                if (vtx.x() < minX) minX = vtx.x();
-                if (vtx.x() > maxX) maxX = vtx.x();
-                if (vtx.y() < minY) minY = vtx.y();
-                if (vtx.y() > maxY) maxY = vtx.y();
-            }
-            _constraintRingBounds.push_back(osg::Vec4(minX, minY, maxX, maxY));
-
-            std::vector<ConstraintEdge> edges;
-            edges.reserve(ring.size());
-            if (!ring.empty()) {
-                for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
-                    const osg::Vec2 &vi = ring[i];
-                    const osg::Vec2 &vj = ring[j];
-                    ConstraintEdge edge;
-                    edge.viX = vi.x();
-                    edge.viY = vi.y();
-                    edge.vjX = vj.x();
-                    edge.vjY = vj.y();
-                    edge.ex = edge.vjX - edge.viX;
-                    edge.ey = edge.vjY - edge.viY;
-                    edge.minX = std::min(edge.viX, edge.vjX);
-                    edge.maxX = std::max(edge.viX, edge.vjX);
-                    edge.minY = std::min(edge.viY, edge.vjY);
-                    edge.maxY = std::max(edge.viY, edge.vjY);
-                    edge.edgeLength2 = edge.ex * edge.ex + edge.ey * edge.ey;
-                    edges.push_back(edge);
-                }
-            }
-            _constraintRingEdges.push_back(edges);
-        }
 
         //addDebugTime("WorstPointsFinder constructor", startTime);
     }
@@ -199,10 +313,6 @@ public:
     {
         VPB_DETAIL_TIME_DECL(startTime);
         std::map<float, osg::Vec3> worstPointsPerError;
-        std::vector<size_t> triangleRingIndices;
-        std::vector<size_t> rowRingIndices;
-        triangleRingIndices.reserve(_constraintRings.size());
-        rowRingIndices.reserve(_constraintRings.size());
         for (CDT::TriangleVec::const_iterator it = _triangulation.triangles.begin(); it != _triangulation.triangles.end(); ++it) {
             VPB_DETAIL_TIME_ADD("getWorstPointPerError: traversal", startTime);
             VPB_DETAIL_TIME_RESET(startTime);
@@ -242,20 +352,6 @@ public:
 
             VPB_DETAIL_TIME_ADD("getWorstPointPerError: extract col,row bbox", startTime);
 
-            // Pre-filter rings to only those whose bbox intersects this triangle's bbox.
-            // This avoids scanning unrelated constraint rings for every height-field sample.
-            VPB_DETAIL_TIME_RESET(startTime);
-            triangleRingIndices.clear();
-            for (size_t ri = 0; ri < _constraintRings.size(); ++ri) {
-                const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
-                if (ringBounds[2] < bbox.xMin() || ringBounds[0] > bbox.xMax() ||
-                    ringBounds[3] < bbox.yMin() || ringBounds[1] > bbox.yMax()) {
-                    continue;
-                }
-                triangleRingIndices.push_back(ri);
-            }
-            VPB_DETAIL_TIME_ADD("getWorstPointPerError: prefilter triangle rings", startTime);
-
             // Traverse triangle bbox in height field
             float v1x = v1.x();
             float v1y = v1.y();
@@ -274,19 +370,6 @@ public:
 
             for (unsigned int r = llRow; r <= urRow; ++r) {
                 float y = _heightFieldSouth + _heightFieldHeight * r;
-
-                // Further pre-filter by row so per-point checks only consider rings whose
-                // vertical bbox spans this scanline.
-                VPB_DETAIL_TIME_RESET(startTime);
-                rowRingIndices.clear();
-                for (size_t tr = 0; tr < triangleRingIndices.size(); ++tr) {
-                    size_t ri = triangleRingIndices[tr];
-                    const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
-                    if (y < ringBounds[1] || y > ringBounds[3])
-                        continue;
-                    rowRingIndices.push_back(ri);
-                }
-                VPB_DETAIL_TIME_ADD("getWorstPointPerError: prefilter row rings", startTime);
 
                 // Row-constant parts of the three edge functions and of the barycentric
                 // numerators, hoisted out of the column loop.
@@ -330,29 +413,12 @@ public:
                     VPB_DETAIL_TIME_RESET(startTime);
 
                     // Within constraint area?
-                    // Use nonzero winding across rings so nested/overlapping constraints
-                    // from separate shapes stay excluded instead of cancelling out.
-                    int winding = 0;
-                    for (size_t rii = 0; rii < rowRingIndices.size(); ++rii) {
-                        size_t ri = rowRingIndices[rii];
-                        // Cheap bounding-box reject before the full edge scan.
-                        const osg::Vec4 &ringBounds = _constraintRingBounds[ri];
-                        if (pos.x() < ringBounds[0] || pos.x() > ringBounds[2]) {
-                            continue;
-                        }
-
-                        bool onEdge = false;
-                        winding += ringWindingNumber(pos, _constraintRingEdges[ri], onEdge);
-                        if (onEdge) {
-                            winding = 1;
-                            break;
-                        }
-                    }
+                    bool insideConstraint = _constraintMask.inside(c, r);
 
                     VPB_DETAIL_TIME_ADD("getWorstPointPerError: withinRing", startTime);
                     VPB_DETAIL_TIME_RESET(startTime);
 
-                    if (winding != 0)
+                    if (insideConstraint)
                         continue;
 
                     // Interpolate Z 
@@ -418,34 +484,6 @@ public:
     }
 
 private:
-    inline int ringWindingNumber(const osg::Vec2 &p, const std::vector<ConstraintEdge> &edges, bool &onEdge)
-    {
-        onEdge = false;
-        int wn = 0;
-        for (size_t i = 0; i < edges.size(); ++i) {
-            const ConstraintEdge &edge = edges[i];
-            // A point lying on an edge (within a small tolerance) is considered inside the ring.
-            float cross = edge.ex * (p.y() - edge.viY) - edge.ey * (p.x() - edge.viX);
-            float cross2 = cross * cross;
-            if (cross2 <= _toleranceSquared * edge.edgeLength2 &&
-                p.x() >= edge.minX - _tolerance && p.x() <= edge.maxX + _tolerance &&
-                p.y() >= edge.minY - _tolerance && p.y() <= edge.maxY + _tolerance) {
-                onEdge = true;
-                return 0;
-            }
-
-            float isLeft = edge.ex * (p.y() - edge.viY) - (p.x() - edge.viX) * edge.ey;
-            if (edge.viY <= p.y()) {
-                if (edge.vjY > p.y() && isLeft > 0.0f) ++wn;
-            }
-            else {
-                if (edge.vjY <= p.y() && isLeft < 0.0f) --wn;
-            }
-        }
-
-        return wn;
-    }
-
     inline bool vertexAdded(const osg::Vec2 &pos)
     {
         for (std::vector<CDT::V2d<float> >::const_iterator it = _triangulation.vertices.begin(); it != _triangulation.vertices.end(); ++it) {
@@ -465,9 +503,7 @@ private:
     float _maxError;
     float _batchSize;
     float _batchMaxDist2;
-    const std::vector<std::vector<osg::Vec2> > &_constraintRings;
-    std::vector<osg::Vec4> _constraintRingBounds;
-    std::vector<std::vector<ConstraintEdge> > _constraintRingEdges;
+    const ConstraintSampleMask &_constraintMask;
 
     float _heightFieldWidth;
     float _heightFieldHeight;
@@ -476,7 +512,6 @@ private:
     unsigned int _heightFieldNumCols;
     unsigned int _heightFieldNumRows;
     float _tolerance;
-    float _toleranceSquared;
 };
 
 
@@ -3376,6 +3411,8 @@ osg::Node* DestinationTile::createPolygonal()
         // the loop has converged on the final triangulation.
         CDT::Triangulation<float> delaunayTriangulation;
 
+        ConstraintSampleMask constraintMask(grid.get(), heightFieldBbox, localConstraintRings);
+
         while (maximumError > 0.0 && currentError > maximumError && loopNumber < maxNumLoops) {
             //osg::Timer_t loopstartTime = osg::Timer::instance()->tick();
             //startTime = osg::Timer::instance()->tick();
@@ -3452,7 +3489,7 @@ osg::Node* DestinationTile::createPolygonal()
             //startTime = osg::Timer::instance()->tick();
 
             // Find batchSize most differing points
-            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, localConstraintRings);
+            WorstPointsFinder worstPointFinder(delaunayTriangulation, constraintHeights, cdtHeights, grid, heightFieldBbox, maximumError, batchSize, batchMaxDist2, constraintMask);
 
             //addDebugTime("WorstPointsFinder constructor", startTime);
 
