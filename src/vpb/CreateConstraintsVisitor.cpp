@@ -2,7 +2,6 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
-#include <iomanip>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -212,6 +211,7 @@ CreateConstraintsVisitor::CreateConstraintsVisitor(const ElevationSampler *sampl
     : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
     , _sampler(sampler)
     , _lateral(lateral)
+    , _shapeFileHasZ(false)
 {
 }
 
@@ -232,6 +232,7 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
 
         ConstraintRing ring;
         ring.reserve(count);
+        bool ringHasOwnZ = !_lateral && _shapeFileHasZ;
         if (_lateral)
         {
             // Road quads: the vertices form a closed polygon (typically a 4-vertex quad per
@@ -342,16 +343,6 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
             std::vector<float> zraw;
             std::vector<bool> zvalid;
 
-            // A shape file that carries its own elevations owns them; only flat rings fall
-            // back to sampling the height field.
-            bool ringHasOwnZ = false;
-            for (unsigned int i = 0; i < count; ++i)
-            {
-                unsigned int index = i + first;
-                if (index >= vertices->size()) break;
-                if ((*vertices)[index].z() != 0.0) { ringHasOwnZ = true; break; }
-            }
-
             for (unsigned int i = 0; i < count; ++i)
             {
                 unsigned int index = i + first;
@@ -393,7 +384,11 @@ void CreateConstraintsVisitor::apply(osg::Geometry &geometry)
             ring.pop_back();
         }
 
-        if (ring.size() >= 2) _rings.push_back(ring);
+        if (ring.size() >= 2)
+        {
+            _rings.push_back(ring);
+            _ringsHaveOwnZ.push_back(ringHasOwnZ);
+        }
     }
 }
 
@@ -583,7 +578,9 @@ void vpb::buildTileConstraints(
     CDT::EdgeVec &edges,
     std::vector<float> &heights,
     const float& relativeHeight,
-    std::vector<osg::Vec3> *borderCrossings)
+    std::vector<osg::Vec3> *borderCrossings,
+    const std::vector<bool> *ringsHaveOwnZ,
+    std::vector<bool> *borderCrossingsFollowTerrain)
 {
     for (size_t r = 0; r < rings.size(); ++r)
     {
@@ -591,6 +588,10 @@ void vpb::buildTileConstraints(
         size_t n = ring.size();
         if (n < 2) continue;
         if (ringOutsideExtents(ring, tileExtents)) continue;
+
+        // A ring that only follows the terrain must keep doing so where a tile border cuts it,
+        // so its crossings take the terrain height rather than one interpolated along the ring.
+        bool followTerrain = ringsHaveOwnZ && r < ringsHaveOwnZ->size() && !(*ringsHaveOwnZ)[r];
 
         // Fast path: when the whole ring lies inside the tile, emit it directly as a closed
         // loop. This is both quicker and guarantees the closing edge is always present for
@@ -709,11 +710,7 @@ void vpb::buildTileConstraints(
                 if (borderCrossings && polyline[k].border)
                 {
                     borderCrossings->push_back(osg::Vec3(local.x(), local.y(), height));
-                    //std::cout << std::fixed << std::setprecision(15);
-                    //std::cout << "remo.createLightPoint(false, "
-                    //          << polyline[k].world.x() << ", "
-                    //          << polyline[k].world.y() << ", "
-                    //          << polyline[k].world.z() << ")" << std::endl;
+                    if (borderCrossingsFollowTerrain) borderCrossingsFollowTerrain->push_back(followTerrain);
                 }
             }
 

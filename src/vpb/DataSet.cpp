@@ -47,6 +47,7 @@
 // standard library includes
 #include <sstream>
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 
 
@@ -153,6 +154,36 @@ void DataSet::loadSources()
     }
 }
 
+namespace
+{
+    // Reads the shape type from the .shp main file header: a big-endian file code of 9994 at
+    // offset 0 and a little-endian shape type at offset 32. Returns false when the header could
+    // not be read. The Z shape types are PointZ, PolyLineZ, PolygonZ, MultiPointZ and MultiPatch.
+    bool readShapeFileHasZ(const std::string& filename, bool& hasZ)
+    {
+        hasZ = false;
+        if (filename.empty()) return false;
+
+        std::ifstream file(filename.c_str(), std::ios::binary);
+        if (!file) return false;
+
+        unsigned char header[36];
+        file.read(reinterpret_cast<char*>(header), sizeof(header));
+        if (file.gcount() != (std::streamsize)sizeof(header)) return false;
+
+        unsigned int fileCode = ((unsigned int)header[0] << 24) | ((unsigned int)header[1] << 16) |
+                                ((unsigned int)header[2] << 8) | (unsigned int)header[3];
+        if (fileCode != 9994) return false;
+
+        unsigned int shapeType = (unsigned int)header[32] | ((unsigned int)header[33] << 8) |
+                                 ((unsigned int)header[34] << 16) | ((unsigned int)header[35] << 24);
+
+        hasZ = shapeType == 11 || shapeType == 13 || shapeType == 15 ||
+               shapeType == 18 || shapeType == 31;
+        return true;
+    }
+}
+
 const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral, const std::string& lineShapeFile)
 {
     OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_constraintCacheMutex);
@@ -163,6 +194,17 @@ const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::No
     // Build the rings once, sampling elevation from all sources at the finest resolution.
     ElevationSampler sampler(this, cs);
     CreateConstraintsVisitor visitor(&sampler, lateral);
+
+    bool hasZ = false;
+    if (readShapeFileHasZ(shapeFileNode->getName(), hasZ))
+    {
+        visitor.setShapeFileHasZ(hasZ);
+    }
+    else
+    {
+        log(osg::WARN, "Warning: unable to read the shape type of %s, treating it as having no elevations",
+            shapeFileNode->getName().c_str());
+    }
 
     // For lateral (road) shape files, load the road centerline shape file and hand its line
     // segments to the visitor so it can tell which polygon edges are laterally-flat
@@ -188,7 +230,14 @@ const std::vector<std::vector<osg::Vec3d> >& DataSet::getConstraintRings(osg::No
 
     std::vector<std::vector<osg::Vec3d> >& rings = _constraintRingsCache[shapeFileNode];
     rings = visitor.getRings();
+    _constraintRingsHaveOwnZCache[shapeFileNode] = visitor.getRingsHaveOwnZ();
     return rings;
+}
+
+const std::vector<bool>& DataSet::getConstraintRingsHaveOwnZ(osg::Node* shapeFileNode)
+{
+    OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_constraintCacheMutex);
+    return _constraintRingsHaveOwnZCache[shapeFileNode];
 }
 
 bool DataSet::mapLatLongsToXYZ() const

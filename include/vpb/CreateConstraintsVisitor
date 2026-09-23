@@ -63,6 +63,10 @@ namespace vpb
 	public:
 		CreateConstraintsVisitor(const ElevationSampler *sampler, bool lateral = false);
 
+		/// Tells the visitor that the shape file stores elevations (one of the Z shape types), so
+		/// the vertices' own z values are used instead of elevations sampled from the sources.
+		void setShapeFileHasZ(bool hasZ) { _shapeFileHasZ = hasZ; }
+
 		/// Sets the road centerline segments (in the same source coordinate system as the
 		/// constraint shape file) used by the lateral path to decide which polygon edges are
 		/// cross-sections. Each pair is one line segment (start, end) in x/y.
@@ -72,11 +76,17 @@ namespace vpb
 
 		const ConstraintRings &getRings() const { return _rings; }
 
+		/// Parallel to getRings(): true when that ring's elevations came from the shape file
+		/// itself rather than from sampling the height field.
+		const std::vector<bool> &getRingsHaveOwnZ() const { return _ringsHaveOwnZ; }
+
 	private:
 		const ElevationSampler *_sampler;
 		bool _lateral;
+		bool _shapeFileHasZ;
 		std::vector<std::pair<osg::Vec2d, osg::Vec2d> > _lineSegments;
 		ConstraintRings _rings;
+		std::vector<bool> _ringsHaveOwnZ;
 	};
 
 	/// Collects the 2D line segments (x/y in source coordinates) from every line geometry in a
@@ -92,6 +102,8 @@ namespace vpb
 	/// vertices, edges and heights are appended to the supplied containers; edge indices are
 	/// offset by the current vertices size so several shape files can be combined. When supplied,
 	/// borderCrossings receives each tile-border endpoint with its constraint-interpolated height.
+	/// borderCrossingsFollowTerrain is parallel to it and flags the crossings whose ring carries no
+	/// elevations of its own, so the caller can give those the terrain height at that point instead.
 	VPB_EXPORT void buildTileConstraints(
 		const ConstraintRings &rings,
 		const GeospatialExtents &tileExtents,
@@ -103,7 +115,9 @@ namespace vpb
 		CDT::EdgeVec &edges,
 		std::vector<float> &heights,
 		const float &relativeHeight = 0.0f,
-		std::vector<osg::Vec3> *borderCrossings = 0);
+		std::vector<osg::Vec3> *borderCrossings = 0,
+		const std::vector<bool> *ringsHaveOwnZ = 0,
+		std::vector<bool> *borderCrossingsFollowTerrain = 0);
 
 	/// Transforms whole world-space constraint rings into the tile-local coordinate system
 	/// (matching the transform buildTileConstraints applies), keeping only the 2D x/y of each

@@ -2605,15 +2605,78 @@ namespace
         heights.swap(keptHeights);
     }
 
+    // Height of the closest point on a border loop. Used to put a terrain-following constraint
+    // crossing back onto the terrain, so it must be given the border before the vertices inside
+    // constraint areas are dropped from it.
+    inline bool borderHeightAt(
+        const std::vector<CDT::V2d<float> > &vertices,
+        const std::vector<float> &heights,
+        float x, float y,
+        float &height)
+    {
+        if (vertices.size() < 2 || heights.size() < vertices.size()) return false;
+
+        double bestDistanceSq = DBL_MAX;
+        for (size_t edgeIndex = 0; edgeIndex < vertices.size(); ++edgeIndex) {
+            size_t nextIndex = (edgeIndex + 1) % vertices.size();
+            double dx = (double)vertices[nextIndex].x - (double)vertices[edgeIndex].x;
+            double dy = (double)vertices[nextIndex].y - (double)vertices[edgeIndex].y;
+            double lengthSq = dx * dx + dy * dy;
+            double t = lengthSq > 0.0
+                ? (((double)x - vertices[edgeIndex].x) * dx +
+                   ((double)y - vertices[edgeIndex].y) * dy) / lengthSq
+                : 0.0;
+            t = std::max(0.0, std::min(1.0, t));
+            double offsetX = (double)x - ((double)vertices[edgeIndex].x + t * dx);
+            double offsetY = (double)y - ((double)vertices[edgeIndex].y + t * dy);
+            double distanceSq = offsetX * offsetX + offsetY * offsetY;
+            if (distanceSq < bestDistanceSq) {
+                bestDistanceSq = distanceSq;
+                height = (float)(heights[edgeIndex] * (1.0 - t) + heights[nextIndex] * t);
+            }
+        }
+
+        return bestDistanceSq < DBL_MAX;
+    }
+
+    // A terrain-following constraint crossing exists twice, as a constraint vertex and as the
+    // border vertex inserted below, and the merge later keeps the constraint one. Both therefore
+    // have to be moved onto the terrain here.
+    inline void applyTerrainHeightToBorderCrossings(
+        std::vector<osg::Vec3> &crossings,
+        const std::vector<bool> &followTerrain,
+        const std::vector<CDT::V2d<float> > &terrainVertices,
+        const std::vector<float> &terrainHeights,
+        const std::vector<CDT::V2d<float> > &constraintVertices,
+        std::vector<float> &constraintHeights)
+    {
+        for (size_t crossingIndex = 0; crossingIndex < crossings.size(); ++crossingIndex) {
+            if (crossingIndex >= followTerrain.size() || !followTerrain[crossingIndex]) continue;
+
+            osg::Vec3 &crossing = crossings[crossingIndex];
+            float height = crossing.z();
+            if (!borderHeightAt(terrainVertices, terrainHeights, crossing.x(), crossing.y(), height)) continue;
+
+            crossing.z() = height;
+
+            // The same crossing can appear on two clipped arcs of the ring, so patch them all.
+            for (size_t v = 0; v < constraintVertices.size() && v < constraintHeights.size(); ++v) {
+                if (constraintVertices[v].x == crossing.x() && constraintVertices[v].y == crossing.y())
+                    constraintHeights[v] = height;
+            }
+        }
+    }
+
     inline void insertConstraintBorderCrossings(
         std::vector<CDT::V2d<float> > &vertices,
         std::vector<float> &heights,
         const std::vector<osg::Vec3> &crossings)
     {
-        if (vertices.size() < 2) return;
+        if (vertices.size() < 2 || heights.size() < vertices.size()) return;
 
         for (size_t crossingIndex = 0; crossingIndex < crossings.size(); ++crossingIndex) {
             const osg::Vec3 &crossing = crossings[crossingIndex];
+
             bool foundExisting = false;
             for (size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex) {
                 if (vertices[vertexIndex].x == crossing.x() && vertices[vertexIndex].y == crossing.y()) {
@@ -3227,6 +3290,7 @@ osg::Node* DestinationTile::createPolygonal()
         CDT::EdgeVec constraintEdges;
         std::vector<float> constraintHeights;
         std::vector<osg::Vec3> constraintBorderCrossings;
+        std::vector<bool> constraintBorderCrossingsFollowTerrain;
         ConstraintRings constraintRings;
         if (_models.valid()) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
@@ -3265,7 +3329,9 @@ osg::Node* DestinationTile::createPolygonal()
                     buildTileConstraints(
                         rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
                         constraintVertices, constraintEdges, constraintHeights, relativeHeight,
-                        &constraintBorderCrossings
+                        &constraintBorderCrossings,
+                        &_dataSet->getConstraintRingsHaveOwnZ(itr->get()),
+                        &constraintBorderCrossingsFollowTerrain
                     );
                     constraintRings.insert(constraintRings.end(), rings.begin(), rings.end());
 
@@ -3327,6 +3393,19 @@ osg::Node* DestinationTile::createPolygonal()
         std::reverse(topBorderHeights.begin(), topBorderHeights.end());
         std::reverse(leftBorderHeights.begin(), leftBorderHeights.end());
 
+        // The complete border, kept before the vertices inside constraint areas are dropped from
+        // it, so a terrain-following constraint crossing can still read the terrain at its position.
+        std::vector<CDT::V2d<float> > terrainBorderVertices;
+        std::vector<float> terrainBorderHeights;
+        terrainBorderVertices.insert(terrainBorderVertices.end(), bottomBorderVertices.begin(), bottomBorderVertices.end());
+        terrainBorderVertices.insert(terrainBorderVertices.end(), rightBorderVertices.begin(), rightBorderVertices.end());
+        terrainBorderVertices.insert(terrainBorderVertices.end(), topBorderVertices.begin(), topBorderVertices.end());
+        terrainBorderVertices.insert(terrainBorderVertices.end(), leftBorderVertices.begin(), leftBorderVertices.end());
+        terrainBorderHeights.insert(terrainBorderHeights.end(), bottomBorderHeights.begin(), bottomBorderHeights.end());
+        terrainBorderHeights.insert(terrainBorderHeights.end(), rightBorderHeights.begin(), rightBorderHeights.end());
+        terrainBorderHeights.insert(terrainBorderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
+        terrainBorderHeights.insert(terrainBorderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
+
         // Exclude border vertices that fall inside a constraint area (keeping each border's
         // first and last vertex so the tile outline stays connected at the corners), dropping
         // the aligned heights as well. Uses the same nonzero-winding rule as the worst-point
@@ -3348,9 +3427,11 @@ osg::Node* DestinationTile::createPolygonal()
         borderHeights.insert(borderHeights.end(), topBorderHeights.begin(), topBorderHeights.end());
         borderHeights.insert(borderHeights.end(), leftBorderHeights.begin(), leftBorderHeights.end());
 
-        // The clipping step knows the exact constraint segment and therefore owns the crossing
-        // height. Insert those points into the border loop directly instead of rediscovering
-        // them through local-space segment intersection.
+        // Crossings come straight from the clipping step, so they are inserted into the border
+        // loop directly rather than rediscovered through local-space segment intersection.
+        applyTerrainHeightToBorderCrossings(constraintBorderCrossings, constraintBorderCrossingsFollowTerrain,
+                                            terrainBorderVertices, terrainBorderHeights,
+                                            constraintVertices, constraintHeights);
         insertConstraintBorderCrossings(borderVertices, borderHeights, constraintBorderCrossings);
 
         for (CDT::VertInd i = constraintVertices.size(); i < constraintVertices.size() + borderVertices.size() - 1; ++i) {

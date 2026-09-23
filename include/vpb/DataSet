@@ -115,6 +115,10 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         /// the edge midpoint so the road stays laterally flat.
         const std::vector<std::vector<osg::Vec3d> >& getConstraintRings(osg::Node* shapeFileNode, osg::CoordinateSystemNode* cs, bool lateral = false, const std::string& lineShapeFile = std::string());
 
+        /// Parallel to getConstraintRings(): true when that ring's elevations came from the
+        /// shape file itself rather than from sampling the height field.
+        const std::vector<bool>& getConstraintRingsHaveOwnZ(osg::Node* shapeFileNode);
+
         void setRegular(const bool &regular);
         bool getRegular() const { return _regular; }
 
@@ -306,6 +310,7 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
 
         OpenThreads::Mutex                          _constraintCacheMutex;
         std::map<osg::Node*, std::vector<std::vector<osg::Vec3d> > > _constraintRingsCache;
+        std::map<osg::Node*, std::vector<bool> >    _constraintRingsHaveOwnZCache;
 };
 
 }
