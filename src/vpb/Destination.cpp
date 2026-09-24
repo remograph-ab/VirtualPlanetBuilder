@@ -2645,6 +2645,7 @@ namespace
     inline void applyTerrainHeightToBorderCrossings(
         std::vector<osg::Vec3> &crossings,
         const std::vector<bool> &followTerrain,
+        const std::vector<float> &relativeHeights,
         const std::vector<CDT::V2d<float> > &terrainVertices,
         const std::vector<float> &terrainHeights,
         const std::vector<CDT::V2d<float> > &constraintVertices,
@@ -2656,6 +2657,9 @@ namespace
             osg::Vec3 &crossing = crossings[crossingIndex];
             float height = crossing.z();
             if (!borderHeightAt(terrainVertices, terrainHeights, crossing.x(), crossing.y(), height)) continue;
+
+            // The terrain height replaces the clipped one, which already carried the offset.
+            if (crossingIndex < relativeHeights.size()) height += relativeHeights[crossingIndex];
 
             crossing.z() = height;
 
@@ -3291,6 +3295,7 @@ osg::Node* DestinationTile::createPolygonal()
         std::vector<float> constraintHeights;
         std::vector<osg::Vec3> constraintBorderCrossings;
         std::vector<bool> constraintBorderCrossingsFollowTerrain;
+        std::vector<float> constraintBorderCrossingsRelativeHeight;
         ConstraintRings constraintRings;
         if (_models.valid()) {
             for (ModelList::iterator itr = _models->_shapeFiles.begin();
@@ -3333,6 +3338,9 @@ osg::Node* DestinationTile::createPolygonal()
                         &_dataSet->getConstraintRingsHaveOwnZ(itr->get()),
                         &constraintBorderCrossingsFollowTerrain
                     );
+
+                    // Crossings just appended belong to this shape file, so they carry its offset.
+                    constraintBorderCrossingsRelativeHeight.resize(constraintBorderCrossings.size(), relativeHeight);
                     constraintRings.insert(constraintRings.end(), rings.begin(), rings.end());
 
                     // Keep this shape file's rings as a separate group (in tile-local coords) so
@@ -3430,6 +3438,7 @@ osg::Node* DestinationTile::createPolygonal()
         // Crossings come straight from the clipping step, so they are inserted into the border
         // loop directly rather than rediscovered through local-space segment intersection.
         applyTerrainHeightToBorderCrossings(constraintBorderCrossings, constraintBorderCrossingsFollowTerrain,
+                                            constraintBorderCrossingsRelativeHeight,
                                             terrainBorderVertices, terrainBorderHeights,
                                             constraintVertices, constraintHeights);
         insertConstraintBorderCrossings(borderVertices, borderHeights, constraintBorderCrossings);

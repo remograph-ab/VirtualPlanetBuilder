@@ -1376,7 +1376,7 @@ int Commandline::read(std::ostream& fout, osg::ArgumentParser& arguments, osgTer
             //fout<<"--constraints "<<filename<<std::endl;
             osgDB::ifstream in(filename.c_str());
             if (!in.good()) {
-                //fout << "Failed reading constraints file " << filename << std::endl;
+                fout << "Failed reading constraints file " << filename << std::endl;
                 return 1;
             }
 
