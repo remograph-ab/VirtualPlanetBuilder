@@ -66,6 +66,32 @@ struct ValidValueOperator
 };
 
 
+// Returns the band that carries the per pixel validity mask for bandSelected, or 0 when there is none.
+// Datasets that encode no-data via a dedicated alpha band rely on this rather than on a reserved value.
+static GDALRasterBand* findMaskBand(GDALRasterBand* bandSelected, GDALRasterBand* bandAlpha)
+{
+    if (bandAlpha && bandAlpha!=bandSelected) return bandAlpha;
+
+    // fall back on GDAL's own mask, but only when it is backed by an alpha band,
+    // no-data values are already handled by ValidValueOperator.
+    if (bandSelected && (bandSelected->GetMaskFlags() & GMF_ALPHA)!=0) return bandSelected->GetMaskBand();
+
+    return 0;
+}
+
+
+// Reads a single mask sample, returning false when the pixel is masked out.
+static bool isMaskedIn(GDALRasterBand* maskBand, int col, int row)
+{
+    if (!maskBand) return true;
+
+    float maskValue = 0.0f;
+    if (maskBand->RasterIO(GF_Read, col, row, 1, 1, &maskValue, 1, 1, GDT_Float32, 0, 0)!=CE_None) return false;
+
+    return maskValue>0.0f;
+}
+
+
 SourceData::~SourceData()
 {
 }
@@ -102,7 +128,7 @@ float SourceData::getInterpolatedValue(osg::HeightField* hf, double x, double y)
     return result;
 }
 
-float SourceData::getInterpolatedValue(GDALRasterBand *band, double x, double y, float originalHeight)
+float SourceData::getInterpolatedValue(GDALRasterBand *band, double x, double y, float originalHeight, GDALRasterBand *maskBand)
 {
     double geoTransform[6];
     geoTransform[0] = _geoTransform(3,0);
@@ -151,10 +177,10 @@ float SourceData::getInterpolatedValue(GDALRasterBand *band, double x, double y,
     CPLErr lrResult = band->RasterIO(GF_Read, colMax, rowMin, 1, 1, &lrHeight, 1, 1, GDT_Float32, 0, 0);
     CPLErr urResult = band->RasterIO(GF_Read, colMax, rowMax, 1, 1, &urHeight, 1, 1, GDT_Float32, 0, 0);
 
-    bool llValid = (llResult == CE_None && !validValueOperator.isNoDataValue(llHeight));
-    bool ulValid = (ulResult == CE_None && !validValueOperator.isNoDataValue(ulHeight));
-    bool lrValid = (lrResult == CE_None && !validValueOperator.isNoDataValue(lrHeight));
-    bool urValid = (urResult == CE_None && !validValueOperator.isNoDataValue(urHeight));
+    bool llValid = (llResult == CE_None && !validValueOperator.isNoDataValue(llHeight) && isMaskedIn(maskBand, colMin, rowMin));
+    bool ulValid = (ulResult == CE_None && !validValueOperator.isNoDataValue(ulHeight) && isMaskedIn(maskBand, colMin, rowMax));
+    bool lrValid = (lrResult == CE_None && !validValueOperator.isNoDataValue(lrHeight) && isMaskedIn(maskBand, colMax, rowMin));
+    bool urValid = (urResult == CE_None && !validValueOperator.isNoDataValue(urHeight) && isMaskedIn(maskBand, colMax, rowMax));
 
     double x_rem = c - (int)c;
     double y_rem = r - (int)r;
@@ -253,6 +279,8 @@ bool SourceData::sampleElevation(const osg::CoordinateSystemNode* cs, double ver
 
         if (!bandSelected) return false;
 
+        GDALRasterBand* maskBand = findMaskBand(bandSelected, bandAlpha);
+
         ValidValueOperator validValueOperator(bandSelected);
 
         int success = 0;
@@ -263,8 +291,10 @@ bool SourceData::sampleElevation(const osg::CoordinateSystemNode* cs, double ver
         if (!success) scale = 1.0f;
         scale *= (float)verticalScale;
 
-        float h = getInterpolatedValue(bandSelected, x - xoffset, y, 0.0f);
-        if (validValueOperator.isNoDataValue(h)) continue;
+        float h = getInterpolatedValue(bandSelected, x - xoffset, y, 0.0f, maskBand);
+        if (validValueOperator.isNoDataValue(h)) {
+            continue;
+        }
 
         height = offset + h * scale;
         return true;
@@ -1122,6 +1152,9 @@ void SourceData::readHeightField(DestinationData& destination)
                 else log(osg::INFO, "bandSelected->GetUnitType()= null" );
 
 
+                GDALRasterBand* maskBand = findMaskBand(bandSelected, bandAlpha);
+                if (maskBand) log(osg::INFO,"Using alpha band as no-data mask");
+
                 ValidValueOperator validValueOperator(bandSelected);
 
                 int success = 0;
@@ -1177,7 +1210,7 @@ void SourceData::readHeightField(DestinationData& destination)
                         for (int r = destY; r < endY; ++r)
                         {
                             double geoY = orig_Y + (delta_Y * (double)r);
-                            float h = getInterpolatedValue(bandSelected, geoX-xoffset, geoY, hf->getHeight(c,r)/scale);
+                            float h = getInterpolatedValue(bandSelected, geoX-xoffset, geoY, hf->getHeight(c,r)/scale, maskBand);
                             if (!validValueOperator.isNoDataValue(h)) hf->setHeight(c,r,offset + h*scale);
                             else if (!ignoreNoDataValue) hf->setHeight(c,r,noDataValueFill);
                         }
@@ -1200,20 +1233,34 @@ void SourceData::readHeightField(DestinationData& destination)
                     //bandSelected->RasterIO(GF_Read,windowX,_numValuesY-(windowY+windowHeight),windowWidth,windowHeight,floatdata,destWidth,destHeight,GDT_Float32,numBytesPerZvalue,lineSpace);
                     bandSelected->RasterIO(GF_Read,windowX,_numValuesY-(windowY+windowHeight),windowWidth,windowHeight,heightData,destWidth,destHeight,GDT_Float32,0,0);
 
+                    // read the matching mask window so that alpha flagged pixels can be left untouched
+                    float* maskData = 0;
+                    if (maskBand)
+                    {
+                        maskData = new float [ destWidth*destHeight ];
+                        if (maskBand->RasterIO(GF_Read,windowX,_numValuesY-(windowY+windowHeight),windowWidth,windowHeight,maskData,destWidth,destHeight,GDT_Float32,0,0)!=CE_None)
+                        {
+                            delete [] maskData;
+                            maskData = 0;
+                        }
+                    }
+
                     float* heightPtr = heightData;
+                    float* maskPtr = maskData;
 
                     for(int r=destY+destHeight-1;r>=destY;--r)
                     {
                         for(int c=destX;c<destX+destWidth;++c)
                         {
                             float h = *heightPtr++;
-                            if (!validValueOperator.isNoDataValue(h)) hf->setHeight(c,r,offset + h*scale);
+                            bool masked = maskPtr ? (*maskPtr++ <= 0.0f) : false;
+                            if (!masked && !validValueOperator.isNoDataValue(h)) hf->setHeight(c,r,offset + h*scale);
                             else if (!ignoreNoDataValue) hf->setHeight(c,r,noDataValueFill);
-                            h = hf->getHeight(c,r);
                         }
                     }
 
                     delete [] heightData;
+                    delete [] maskData;
                 }
             }
         }

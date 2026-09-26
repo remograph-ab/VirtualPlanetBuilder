@@ -57,7 +57,9 @@ struct VPB_EXPORT SourceData : public osg::Referenced, public SpatialProperties
     virtual void readModels(DestinationData& destination);
     virtual void readShapeFile(DestinationData& destination);
 
-    float getInterpolatedValue(GDALRasterBand *band, double x, double y, float originalHeight);
+    /** maskBand, when non zero, is sampled alongside band and any corner whose mask value is 0
+      * is treated as no-data. */
+    float getInterpolatedValue(GDALRasterBand *band, double x, double y, float originalHeight, GDALRasterBand *maskBand = 0);
     float getInterpolatedValue(osg::HeightField* hf, double x, double y);
 
     /** Sample a single elevation value at (x,y), where (x,y) are given in the coordinate
