@@ -66,6 +66,7 @@ void DataSet::init()
 
     _C1 = 0;
     _R1 = 0;
+    _effectiveMaximumLevel = -1;
 
     _flatNumCols = 0;
     _flatNumRows = 0;
@@ -614,6 +615,8 @@ void DataSet::createNewDestinationGraph(osg::CoordinateSystemNode* cs,
             }
         }
     }
+
+    _effectiveMaximumLevel = highestLevelFound;
 
     // now extend the sources upwards where required.
     for(QuadMap::iterator qitr = _quadMap.begin();

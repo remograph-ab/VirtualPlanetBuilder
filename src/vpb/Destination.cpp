@@ -102,6 +102,24 @@ void DestinationTile::reportTimes()
 }
 
 
+// Clamps a (floored/ceiled) fractional grid index into [0, count - 1]. Negative and NaN values
+// map to 0, so the cast to unsigned can never wrap around.
+static inline unsigned int clampGridIndex(float index, unsigned int count)
+{
+    if (count == 0 || !(index > 0.0f))
+        return 0;
+    if (index >= static_cast<float>(count - 1))
+        return count - 1;
+    return static_cast<unsigned int>(index);
+}
+
+// Spacing between height-field samples as placed by the mesh builder (extent / (count - 1)).
+// The height field's own interval is not used, as it is extent / count for raster terrain.
+static inline float gridSampleSpacing(float extent, unsigned int count, float fallback)
+{
+    return count > 1 ? extent / static_cast<float>(count - 1) : fallback;
+}
+
 // Nonzero-winding classification of every height-field sample against the tile's constraint
 // rings. Neither the rings nor the grid change while the incremental Delaunay loop runs, so
 // this is evaluated once per tile and shared by every worst-point pass.
@@ -117,13 +135,14 @@ public:
     {
         unsigned int numRows = heightField->getNumRows();
         _mask.assign(static_cast<size_t>(_numCols) * numRows, 0);
-        if (constraintRings.empty())
+        if (constraintRings.empty() || _numCols == 0 || numRows == 0)
             return;
 
         const float west = heightFieldBbox.xMin();
         const float south = heightFieldBbox.yMin();
-        const float intervalX = heightField->getXInterval();
-        const float intervalY = heightField->getYInterval();
+        const float east = heightFieldBbox.xMax();
+        const float intervalX = gridSampleSpacing(heightFieldBbox.xMax() - west, _numCols, heightField->getXInterval());
+        const float intervalY = gridSampleSpacing(heightFieldBbox.yMax() - south, numRows, heightField->getYInterval());
         const float tolerance = (intervalX + intervalY) / 20.0f;
         const float toleranceSquared = tolerance * tolerance;
 
@@ -182,13 +201,13 @@ public:
                 if (bounds[0] < rowMinX) rowMinX = bounds[0];
                 if (bounds[2] > rowMaxX) rowMaxX = bounds[2];
             }
-            if (rowRingIndices.empty())
+            if (rowRingIndices.empty() || rowMaxX < west || rowMinX > east)
                 continue;
 
-            int firstCol = static_cast<int>(std::max<float>(floorf((rowMinX - west) / intervalX), 0.0f));
-            int lastCol = static_cast<int>(std::min<float>(ceilf((rowMaxX - west) / intervalX), _numCols - 1.0f));
+            unsigned int firstCol = clampGridIndex(floorf((rowMinX - west) / intervalX), _numCols);
+            unsigned int lastCol = clampGridIndex(ceilf((rowMaxX - west) / intervalX), _numCols);
 
-            for (int c = firstCol; c <= lastCol; ++c) {
+            for (unsigned int c = firstCol; c <= lastCol; ++c) {
                 float x = west + intervalX * c;
 
                 int winding = 0;
@@ -298,13 +317,13 @@ public:
     {
         //osg::Timer_t startTime = osg::Timer::instance()->tick();
 
-        _heightFieldWidth = _heightField->getXInterval();
-        _heightFieldHeight = _heightField->getYInterval();
         _heightFieldWest = _heightFieldBbox.xMin();
         _heightFieldSouth = _heightFieldBbox.yMin();
         _heightFieldNumCols = _heightField->getNumColumns();
         _heightFieldNumRows = _heightField->getNumRows();
-        _tolerance = (_heightField->getXInterval() + _heightField->getYInterval()) / 20.0f;
+        _heightFieldWidth = gridSampleSpacing(_heightFieldBbox.xMax() - _heightFieldWest, _heightFieldNumCols, _heightField->getXInterval());
+        _heightFieldHeight = gridSampleSpacing(_heightFieldBbox.yMax() - _heightFieldSouth, _heightFieldNumRows, _heightField->getYInterval());
+        _tolerance = (_heightFieldWidth + _heightFieldHeight) / 20.0f;
 
         //addDebugTime("WorstPointsFinder constructor", startTime);
     }
@@ -345,10 +364,15 @@ public:
             VPB_DETAIL_TIME_ADD("getWorstPointPerError: create bbox", startTime);
             VPB_DETAIL_TIME_RESET(startTime);
 
-            unsigned int llCol = static_cast<unsigned int>(std::max<float>(floorf((bbox.xMin() - _heightFieldWest) / _heightFieldWidth), 0.0f));
-            unsigned int llRow = static_cast<unsigned int>(std::max<float>(floorf((bbox.yMin() - _heightFieldSouth) / _heightFieldHeight), 0.0f));
-            unsigned int urCol = static_cast<unsigned int>(std::min<float>(ceilf((bbox.xMax() - _heightFieldWest) / _heightFieldWidth), _heightFieldNumCols - 1.0f));
-            unsigned int urRow = static_cast<unsigned int>(std::min<float>(ceilf((bbox.yMax() - _heightFieldSouth) / _heightFieldHeight), _heightFieldNumRows - 1.0f));
+            // Triangle lies entirely outside the height field: no samples to test.
+            if (_heightFieldNumCols == 0 || _heightFieldNumRows == 0 ||
+                !(bbox.xMin() <= bbox.xMax()) || !(bbox.yMin() <= bbox.yMax()))
+                continue;
+
+            unsigned int llCol = clampGridIndex(floorf((bbox.xMin() - _heightFieldWest) / _heightFieldWidth), _heightFieldNumCols);
+            unsigned int llRow = clampGridIndex(floorf((bbox.yMin() - _heightFieldSouth) / _heightFieldHeight), _heightFieldNumRows);
+            unsigned int urCol = clampGridIndex(ceilf((bbox.xMax() - _heightFieldWest) / _heightFieldWidth), _heightFieldNumCols);
+            unsigned int urRow = clampGridIndex(ceilf((bbox.yMax() - _heightFieldSouth) / _heightFieldHeight), _heightFieldNumRows);
 
             VPB_DETAIL_TIME_ADD("getWorstPointPerError: extract col,row bbox", startTime);
 
@@ -3329,7 +3353,7 @@ osg::Node* DestinationTile::createPolygonal()
                         lineShapeFile = ditr->substr(14);
                     }
                 }
-                if (isConstraint && (allLevels || _level == _dataSet->getMaximumNumOfLevels() - 1)) {
+                if (isConstraint && (allLevels || _level == _dataSet->getEffectiveMaximumLevel())) {
                     const ConstraintRings &rings = _dataSet->getConstraintRings(itr->get(), _cs.get(), lateral, lineShapeFile);
                     buildTileConstraints(
                         rings, _extents, et, mapLatLongsToXYZ, useLocalToTileTransform, _worldToLocal,
@@ -3481,18 +3505,16 @@ osg::Node* DestinationTile::createPolygonal()
         //addDebugTime("prepare delaunay", startTime);
         //startTime = osg::Timer::instance()->tick();
 
-        // Prepare height field bbox (loop invariant)
-        osg::BoundingBox heightFieldBbox(
-            grid->getOrigin(),
-            grid->getOrigin() + osg::Vec3(
-                grid->getXInterval() * grid->getNumColumns(),
-                grid->getYInterval() * grid->getNumRows(),
-                0.0f
-            )
-        );
+        // Prepare height field bbox (loop invariant). Built from the double-precision _extents,
+        // exactly like the mesh vertices above, rather than from the float grid origin: for large
+        // projected coordinates the float origin is off by up to half a float ulp (tenths of a
+        // meter), which shifted the samples relative to the triangulation.
+        osg::Vec3d heightFieldMin(_extents.xMin(), _extents.yMin(), 0.0);
+        osg::Vec3d heightFieldMax(_extents.xMax(), _extents.yMax(), 0.0);
+        osg::BoundingBox heightFieldBbox{osg::Vec3(heightFieldMin), osg::Vec3(heightFieldMax)};
         if (useLocalToTileTransform) {
-            heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldBbox._min);
-            heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldBbox._max);
+            heightFieldBbox._min = computeLocalPosition(_worldToLocal, heightFieldMin);
+            heightFieldBbox._max = computeLocalPosition(_worldToLocal, heightFieldMax);
         }
 
         //addDebugTime("height field bbox", startTime);

@@ -119,6 +119,13 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         /// shape file itself rather than from sampling the height field.
         const std::vector<bool>& getConstraintRingsHaveOwnZ(osg::Node* shapeFileNode);
 
+        /// Deepest tile level actually generated, which may be lower than getMaximumNumOfLevels()-1
+        /// when the sources' optimum level (see computeOptimumLevel) is lower.
+        unsigned int getEffectiveMaximumLevel() const
+        {
+            return _effectiveMaximumLevel >= 0 ? static_cast<unsigned int>(_effectiveMaximumLevel) : getMaximumNumOfLevels() - 1;
+        }
+
         void setRegular(const bool &regular);
         bool getRegular() const { return _regular; }
 
@@ -295,6 +302,7 @@ class VPB_EXPORT DataSet : public BuildOptions, public Logger
         int                                         _R1;
 
         bool                                        _newDestinationGraph;
+        int                                         _effectiveMaximumLevel;
 
         std::string                                 _taskOutputDirectory;
 
